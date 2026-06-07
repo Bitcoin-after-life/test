@@ -1,0 +1,9 @@
+{
+ "name": "BAL",
+ "fullname": "Bitcoin After Life",
+ "description": "Provides free and decentralized inheritance support<br> Version: 0.2.8",
+ "author":"Svatantrya",
+ "available_for": ["qt"],
+ "icon":"icons/bal32x32.png"
+ }
+

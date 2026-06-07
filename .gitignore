@@ -1,0 +1,4 @@
+electrum-src/
+**/__pycache__/
+*.pyc
+*.zip
