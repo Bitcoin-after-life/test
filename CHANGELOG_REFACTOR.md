@@ -398,3 +398,60 @@ Suddivisione del vecchio `qt.py` (3777 righe) nei moduli GUI:
   vita (Fase A).
 - **`dd6f677`** (PR **#2**, squash) — correzioni GUI **B1-B10** + fix download
   lista will-executor + `window_utils.py` + test di regressione (sezioni §9-§10).
+- **PR #3** — fix **OverflowError su Windows (anno 2038)** che rompeva le schede
+  Will/Heirs e la voce di menu (sezione §13).
+
+---
+
+## 13. CORREZIONE BUG: OverflowError su Windows (limite anno 2038)
+
+### Sintomo (Windows 11)
+Dopo aver **riavviato Electrum** o **cambiato wallet**, le schede **Will** e
+**Heirs** sparivano e compariva una **voce di menu condensata/illeggibile**
+(icona + testo sovrapposti) sotto il logo di Electrum, accanto a *Portafogli*.
+Su Linux il problema non si manifestava.
+
+### Causa vera (dal log di Electrum dell'utente)
+```
+OverflowError: Python int too large to convert to C int
+  window.py __init__ -> create_heirs_tab -> WillSettingsWidget
+  -> on_locktime_change -> BalTimestamp.to_date
+  -> datetime.fromtimestamp(NLOCKTIME_MAX)
+```
+
+- `NLOCKTIME_MAX = 2**32 - 1 = 4294967295` viene usato come locktime di
+  **default/sentinella**.
+- Su **Windows** `time_t` è a **32 bit**, quindi `datetime.fromtimestamp(ts)`
+  solleva **`OverflowError`** per qualsiasi timestamp oltre il **2038**.
+- Su **Linux 64-bit** la stessa chiamata **funziona**: ecco perché il bug si
+  vedeva solo su Windows e i test su Linux non lo intercettavano.
+- L'eccezione interrompeva `BalWindow.__init__` durante `init_menubar` /
+  `load_wallet`, lasciando le schede Will/Heirs e la voce di menu **a metà
+  costruzione** → l'elemento grafico condensato/illeggibile sotto il logo.
+
+> Nota: i due primi tentativi di correzione (status-bar no-op e idempotenza di
+> `init_menubar_tools`) **non** centravano la causa; sono stati comunque
+> mantenuti perché innocui e leggermente migliorativi, ma il vero colpevole era
+> questo crash a monte.
+
+### Fix (comportamento invariato per tutti i valori normali)
+- **`BalTimestamp._safe_fromtimestamp()`**: `datetime.fromtimestamp` con
+  **clamp a INT32_MAX** (anno 2038) in caso di `OverflowError`/`OSError`/
+  `ValueError`, **esattamente** come la funzione `get_max_allowed_timestamp()`
+  dell'originale (workaround per Electrum issue **#6170**).
+- Usato in `to_date` / `to_timestamp` / `__str__` / `__repr__` di
+  `BalTimestamp`.
+- `gui/qt/widgets.py` (`set_value`): usa il converter sicuro.
+- `core/util.py` (`timestamp_minus`): stessa protezione inline con clamp a
+  INT32_MAX.
+
+I valori entro il 2038 (date assolute normali, durate relative come `90d`/`5y`)
+producono **lo stesso identico risultato** di prima.
+
+### Test
+- `tests/windows_overflow_test.py` riproduce il limite 32-bit di Windows
+  (monkeypatch di `datetime.fromtimestamp`) e dimostra che **senza** il fix si
+  ottiene lo **stesso** `OverflowError` del log, mentre **con** il fix passa.
+  Verificato anche che il test **fallisce** senza il fix.
+
+Confermato dall'utente: **"si ora funziona"**.
