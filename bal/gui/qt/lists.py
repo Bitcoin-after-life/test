@@ -965,13 +965,39 @@ class WillExecutorWidget(QWidget, MessageBoxMixin):
             self.will_executor_list_widget.update()
             Willexecutors.save(self.bal_window.bal_plugin, self.willexecutors_list)
         else:
+            # Control test: try a plain direct HTTPS request (NOT through
+            # Electrum's Network layer).  If this succeeds while the Electrum
+            # request above timed out, the problem is Electrum's network/proxy
+            # state, not the user's connection or the server.
+            control = self._direct_https_probe(candidates[0] if candidates else "")
             detail = "\n".join(errors) if errors else _("Unknown error")
             self.bal_window.show_warning(
                 _("Could not download the will-executors list.")
-                + "\n\n" + _("Details:") + f"\n{detail}\n\n"
+                + "\n\n" + _("Details (via Electrum network):") + f"\n{detail}\n\n"
+                + _("Direct connection test:") + f"\n{control}\n\n"
                 + _("Check your internet connection and the server URL, "
                     "then try again.")
             )
+
+    @staticmethod
+    def _direct_https_probe(url):
+        """Best-effort direct HTTPS GET bypassing Electrum's Network layer.
+
+        Used only for diagnostics when the normal download fails, to tell apart
+        a connectivity problem from an Electrum-network-state problem.
+        """
+        if not url:
+            return "skipped (no url)"
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                url, headers={"user-agent": "BalPlugin-probe"}
+            )
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = r.read()
+                return f"OK (HTTP {r.status}, {len(data)} bytes)"
+        except Exception as e:
+            return f"{type(e).__name__}: {e}"
         self.update()
 
     def export_file(self, path):
