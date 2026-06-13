@@ -911,28 +911,17 @@ class WillExecutorWidget(QWidget, MessageBoxMixin):
         self.will_executor_list_widget.update()
 
     def download_list(self, wes=None):
-        # Use the shared, synchronous downloader on BalWindow (restores the
-        # original direct GUI-thread behaviour, with diagnostics).  Both this
-        # button and the wizard go through the same code path now.
-        result, errors, control = self.bal_window.fetch_will_executors_list(
-            self.bal_window.willexecutors
-        )
-        if result:
-            self.bal_window.willexecutors.update(result)
+        # Both this button and the wizard go through the same code path on
+        # BalWindow, which shows a "Downloading..." dialog (non-blocking GUI),
+        # tries the configured + fallback servers, logs the technical details
+        # and shows a simple message on failure.
+        def on_success(result):
             self.willexecutors_list.update(result)
             self.will_executor_list_widget.update()
             Willexecutors.save(self.bal_window.bal_plugin, self.willexecutors_list)
-        else:
-            detail = "\n".join(errors) if errors else _("Unknown error")
-            self.bal_window.show_warning(
-                _("Could not download the will-executors list.")
-                + "\n\n" + _("Details (via Electrum network):") + f"\n{detail}\n\n"
-                + _("Direct connection test:") + f"\n{control}\n\n"
-                + _("Check your internet connection and the server URL, "
-                    "then try again.")
-            )
-        self.update()
-        self.update()
+            self.update()
+
+        self.bal_window.download_list(self.bal_window.willexecutors, on_success)
 
     def export_file(self, path):
         export_meta_gui(
