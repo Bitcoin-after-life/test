@@ -254,7 +254,7 @@ class PreviewList(MyTreeView, MessageBoxMixin):
             main_window=bal_window.window,
             stretch_column=self.Columns.TXID,
         )
-        # self.parent = parent
+        # self._bal_parent = parent
         self.bal_window = bal_window
         self.decimal_point = bal_window.window.get_decimal_point
 
@@ -528,7 +528,7 @@ class PreviewList(MyTreeView, MessageBoxMixin):
 
 # class PreviewDialog(BalDialog, MessageBoxMixin):
 #    def __init__(self, bal_window, will):
-#        self.parent = bal_window.window
+#        self._bal_parent = bal_window.window
 #        BalDialog.__init__(
 #            self, bal_window=bal_window, bal_plugin=bal_window.bal_plugin
 #        )
@@ -644,7 +644,7 @@ class WillExecutorListWidget(MyTreeView):
                 self.Columns.INFO,
             ],
         )
-        self.parent = parent
+        self._bal_parent = parent
         try:
             self.setModel(QStandardItemModel(self))
             self.sortByColumn(self.Columns.SELECTED, Qt.SortOrder.AscendingOrder)
@@ -672,7 +672,7 @@ class WillExecutorListWidget(MyTreeView):
             #    self.model().itemFromIndex(s_idx).text()
             #    for s_idx in self.selected_in_column(column)
             # )
-            if Willexecutors.is_selected(self.parent.willexecutors_list[sel_key]):
+            if Willexecutors.is_selected(self._bal_parent.willexecutors_list[sel_key]):
                 menu.addAction(
                     _("deselect").format(column_title),
                     lambda: self.deselect(selected_keys),
@@ -704,10 +704,10 @@ class WillExecutorListWidget(MyTreeView):
     def ping_willexecutors(self, selected_keys):
         wout = {}
         for k in selected_keys:
-            wout[k] = self.parent.willexecutors_list[k]
-        self.parent.update_willexecutors(wout)
+            wout[k] = self._bal_parent.willexecutors_list[k]
+        self._bal_parent.update_willexecutors(wout)
 
-        self.parent.save_willexecutors()
+        self._bal_parent.save_willexecutors()
         self.update()
 
     def get_edit_key_from_coordinate(self, row, col):
@@ -717,49 +717,49 @@ class WillExecutorListWidget(MyTreeView):
 
     def delete(self, selected_keys):
         for key in selected_keys:
-            del self.parent.willexecutors_list[key]
+            del self._bal_parent.willexecutors_list[key]
 
-        self.parent.save_willexecutors()
+        self._bal_parent.save_willexecutors()
         self.update()
 
     def select(self, selected_keys):
-        for wid, w in self.parent.willexecutors_list.items():
+        for wid, w in self._bal_parent.willexecutors_list.items():
             if wid in selected_keys:
                 w["selected"] = True
-        self.parent.save_willexecutors()
+        self._bal_parent.save_willexecutors()
         self.update()
 
     def deselect(self, selected_keys):
-        for wid, w in self.parent.willexecutors_list.items():
+        for wid, w in self._bal_parent.willexecutors_list.items():
             if wid in selected_keys:
                 w["selected"] = False
-        self.parent.save_willexecutors()
+        self._bal_parent.save_willexecutors()
         self.update()
 
     def on_edited(self, idx, edit_key, *, text):
-        # prior_name = self.parent.willexecutors_list[edit_key]
+        # prior_name = self._bal_parent.willexecutors_list[edit_key]
         col = idx.column()
         try:
             if col == self.Columns.URL:
-                self.parent.willexecutors_list[text] = self.parent.willexecutors_list[
+                self._bal_parent.willexecutors_list[text] = self._bal_parent.willexecutors_list[
                     edit_key
                 ]
-                del self.parent.willexecutors_list[edit_key]
+                del self._bal_parent.willexecutors_list[edit_key]
             if col == self.Columns.BASE_FEE:
-                self.parent.willexecutors_list[edit_key]["base_fee"] = (
+                self._bal_parent.willexecutors_list[edit_key]["base_fee"] = (
                     Util.encode_amount(text, self.get_decimal_point())
                 )
             if col == self.Columns.ADDRESS:
-                self.parent.willexecutors_list[edit_key]["address"] = text
+                self._bal_parent.willexecutors_list[edit_key]["address"] = text
             if col == self.Columns.INFO:
-                self.parent.willexecutors_list[edit_key]["info"] = text
-            self.parent.save_willexecutors()
+                self._bal_parent.willexecutors_list[edit_key]["info"] = text
+            self._bal_parent.save_willexecutors()
             self.update()
         except Exception:
             pass
 
     def update(self):
-        if self.parent.willexecutors_list is None:
+        if self._bal_parent.willexecutors_list is None:
             return
         try:
             current_key = self.get_role_data_for_current_item(
@@ -770,14 +770,14 @@ class WillExecutorListWidget(MyTreeView):
 
             set_current = None
 
-            for url, value in self.parent.willexecutors_list.items():
+            for url, value in self._bal_parent.willexecutors_list.items():
                 labels = [""] * len(self.Columns)
                 labels[self.Columns.URL] = url
                 if Willexecutors.is_selected(value):
 
                     labels[self.Columns.SELECTED] = [
                         read_QIcon_from_bytes(
-                            self.parent.bal_plugin.read_file("icons/confirmed.png")
+                            self._bal_parent.bal_plugin.read_file("icons/confirmed.png")
                         ),
                         "",
                     ]
@@ -789,7 +789,7 @@ class WillExecutorListWidget(MyTreeView):
                 if str(value.get("status", 0)) == "200":
                     labels[self.Columns.STATUS] = [
                         read_QIcon_from_bytes(
-                            self.parent.bal_plugin.read_file(
+                            self._bal_parent.bal_plugin.read_file(
                                 "icons/status_connected.png"
                             )
                         ),
@@ -798,7 +798,7 @@ class WillExecutorListWidget(MyTreeView):
                 else:
                     labels[self.Columns.STATUS] = [
                         read_QIcon_from_bytes(
-                            self.parent.bal_plugin.read_file("icons/unconfirmed.png")
+                            self._bal_parent.bal_plugin.read_file("icons/unconfirmed.png")
                         ),
                         "",
                     ]
@@ -850,7 +850,7 @@ class WillExecutorWidget(QWidget, MessageBoxMixin):
     def __init__(self, parent, bal_window, willexecutors=None):
         self.bal_window = bal_window
         self.bal_plugin = bal_window.bal_plugin
-        self.parent = parent
+        self._bal_parent = parent
         MessageBoxMixin.__init__(self)
         QWidget.__init__(self, parent)
         if willexecutors:
@@ -911,10 +911,17 @@ class WillExecutorWidget(QWidget, MessageBoxMixin):
         self.will_executor_list_widget.update()
 
     def download_list(self, wes=None):
-        if not wes:
-            wes = self.willexecutors_list
-        self.bal_window.download_list(wes, self.save_willexecutors)
-        self.update()
+        # Both this button and the wizard go through the same code path on
+        # BalWindow, which shows a "Downloading..." dialog (non-blocking GUI),
+        # tries the configured + fallback servers, logs the technical details
+        # and shows a simple message on failure.
+        def on_success(result):
+            self.willexecutors_list.update(result)
+            self.will_executor_list_widget.update()
+            Willexecutors.save(self.bal_window.bal_plugin, self.willexecutors_list)
+            self.update()
+
+        self.bal_window.download_list(self.bal_window.willexecutors, on_success)
 
     def export_file(self, path):
         export_meta_gui(

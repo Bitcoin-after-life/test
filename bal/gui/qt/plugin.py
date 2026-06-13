@@ -21,6 +21,18 @@ from .window import BalWindow
 from .dialogs import BalDialog
 
 
+def _window_key(window):
+    """Return a stable, hashable identity for an Electrum top-level window.
+
+    The original code used ``window.winId`` (the *bound method*, not its
+    result) as a dict key.  That happened to work because the same window
+    object yields the same bound method, but it is semantically wrong and
+    fragile across window re-creation / multiple wallets.  ``id(window)`` is a
+    stable, correct identity for the lifetime of the window object.
+    """
+    return id(window)
+
+
 class Plugin(BalPlugin):
     def __init__(self, parent, config, name):
         _logger.info("INIT BALPLUGIN")
@@ -29,37 +41,50 @@ class Plugin(BalPlugin):
 
     @hook
     def init_qt(self, gui_object):
+        # Called when the plugin is enabled, including *hot* (while a wallet is
+        # already open).  The original code gave up here and asked the user to
+        # restart Electrum; instead we fully initialise the already-open
+        # window(s) so the plugin works immediately.
         _logger.info("HOOK bal init qt")
         try:
             self.gui_object = gui_object
             for window in gui_object.windows:
-                wallet = window.wallet
-                if wallet:
-                    window.show_warning(
-                        _("Please restart Electrum to activate the BAL plugin"),
-                        title=_("Success"),
-                    )
-                    return
-                top_level_window=window.top_level_window()
-                w = BalWindow(self, top_level_window)
-                self.bal_windows[top_level_window.winId] = w
-                for child in window.children():
-                    if isinstance(child, QMenuBar):
-                        for menu_child in child.children():
-                            if isinstance(menu_child, QMenu):
-                                try:
-                                    if menu_child.title() == _("&Tools"):
-                                        w.init_menubar_tools(menu_child)
-
-                                except Exception as e:
-                                    _logger.error(
-                                        ("init_qt except:", menu_child.text())
-                                    )
-                                    raise e
-
+                self._setup_window(window, load_open_wallet=True)
         except Exception as e:
-            _logger.error("Error loading plugini {}".format(e))
+            _logger.error("Error loading plugin {}".format(e))
             raise e
+
+    def _setup_window(self, window, *, load_open_wallet):
+        """Create the BalWindow for *window* and wire its menu (and, when
+        enabling hot, the already-open wallet).
+
+        This mirrors what the ``init_menubar`` + ``load_wallet`` hooks do at
+        normal startup, so enabling the plugin while a wallet is open no longer
+        requires restarting Electrum.
+        """
+        w = self.get_window(window)
+        # Use Electrum's official tools_menu instead of searching the menubar
+        # for a menu whose *translated* title equals "&Tools" (which breaks
+        # under non-English locales).
+        tools_menu = getattr(window, "tools_menu", None)
+        if tools_menu is not None:
+            try:
+                w.init_menubar_tools(tools_menu)
+            except Exception as e:
+                _logger.error("init_qt: failed wiring tools menu: {}".format(e))
+        if load_open_wallet and getattr(window, "wallet", None):
+            # Replicate load_wallet() for the wallet that is already open.
+            try:
+                w.wallet = window.wallet
+                w.init_will()
+                w.willexecutors = Willexecutors.get_willexecutors(
+                    self, update=False, bal_window=w
+                )
+                w.disable_plugin = False
+                w.ok = True
+            except Exception as e:
+                _logger.error("init_qt: failed initialising open wallet: {}".format(e))
+        return w
 
     @hook
     def create_status_bar(self, sb):
@@ -94,9 +119,13 @@ class Plugin(BalPlugin):
     @hook
     def close_wallet(self, wallet):
         _logger.debug("HOOK close wallet")
-        for _winid, win in self.bal_windows.items():
-            if win.wallet == wallet:
-                win.on_close()
+        # Iterate over a snapshot: on_close() may mutate the GUI/state.
+        for win in list(self.bal_windows.values()):
+            if getattr(win, "wallet", None) == wallet:
+                try:
+                    win.on_close()
+                except Exception as e:
+                    _logger.error("close_wallet: on_close failed: {}".format(e))
 
     @hook
     def init_keystore(self):
@@ -107,11 +136,12 @@ class Plugin(BalPlugin):
         _logger.debug("daemon wallet loaded")
 
     def get_window(self, window):
-        window=window.top_level_window()
-        w = self.bal_windows.get(window.winId, None)
+        window = window.top_level_window()
+        key = _window_key(window)
+        w = self.bal_windows.get(key, None)
         if w is None:
             w = BalWindow(self, window)
-            self.bal_windows[window.winId] = w
+            self.bal_windows[key] = w
         return w
 
     def requires_settings(self):
@@ -251,7 +281,7 @@ class Plugin(BalPlugin):
             2,
         )
 
-        if ret := bool(d.exec()):
+        if ret := bool(show_modal(d)):
             try:
                 self.update_all()
                 return ret

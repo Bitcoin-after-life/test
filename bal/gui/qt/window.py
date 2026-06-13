@@ -145,7 +145,9 @@ class BalWindow:
 
     def show_willexecutor_dialog(self):
         self.willexecutor_dialog = WillExecutorDialog(self)
-        self.willexecutor_dialog.show()
+        # Keep it in front of Electrum (window-modal) instead of letting it
+        # fall behind the main window.
+        show_on_top(self.willexecutor_dialog)
 
     def create_heirs_tab(self):
         if not self.heirs:
@@ -563,7 +565,8 @@ class BalWindow:
                 _("Electrum was unable to deserialize the transaction:") + "\n" + str(e)
             )
         else:
-            d.show()
+            # Electrum's own TxDialog: keep it in front of the main window.
+            show_on_top(d, modal_to_window=False)
             return d
 
     def show_transaction(self, tx=None, txid=None, parent=None):
@@ -662,19 +665,48 @@ class BalWindow:
         return password
 
     def on_close(self):
+        # Wallet is closing: run the closing "build will" task and tear down
+        # the plugin's tabs/menu.  Each step is isolated so that one failure
+        # does not leave the GUI half-initialised (which previously forced the
+        # user to restart Electrum).  Errors are logged instead of silently
+        # swallowed.
+        if self.disable_plugin:
+            return
+
+        # 1) Business logic: build/save the will on close (unchanged behaviour).
         try:
-            if not self.disable_plugin:
-                close_window = BalBuildWillDialog(self)
-                close_window.build_will_task()
-                self.save_willitems()
-                self.heirs_tab.close()
-                self.will_tab.close()
-                self.tools_menu.removeAction(self.tools_menu.willexecutors_action)
-                self.window.toggle_tab(self.heirs_tab)
-                self.window.toggle_tab(self.will_tab)
-                self.window.tabs.update()
-        except Exception:
-            pass
+            close_window = BalBuildWillDialog(self)
+            close_window.build_will_task()
+            self.save_willitems()
+        except Exception as e:
+            _logger.error(f"on_close: build/save will failed: {e}")
+
+        # 2) GUI teardown - each action guarded independently.
+        def _safe(desc, fn):
+            try:
+                fn()
+            except Exception as e:
+                _logger.error(f"on_close: {desc} failed: {e}")
+
+        _safe("close heirs tab", lambda: self.heirs_tab.close())
+        _safe("close will tab", lambda: self.will_tab.close())
+        _safe(
+            "remove willexecutors menu action",
+            lambda: self.tools_menu.removeAction(
+                self.tools_menu.willexecutors_action
+            ),
+        )
+        _safe("toggle heirs tab off", lambda: self.window.toggle_tab(self.heirs_tab))
+        _safe("toggle will tab off", lambda: self.window.toggle_tab(self.will_tab))
+        _safe("refresh tabs", lambda: self.window.tabs.update())
+
+        # 3) Reset in-memory state so re-enabling/re-opening starts clean.
+        self.willitems = {}
+        self.will = {}
+        self.heirs = {}
+        self.willexecutors = {}
+        self.disable_plugin = True
+        self.ok = False
 
     def ask_password_and_sign_transactions(self, callback=None):
         def on_success(txs):
@@ -863,20 +895,82 @@ class BalWindow:
             _logger.error(f"impossible to update will_executor_list_widget {e}")
         self.will_executors.update()
 
+    def fetch_will_executors_list(self, old_willexecutors):
+        """Download the will-executor list (runs inside the TaskThread worker).
+
+        Tries the configured server first, then the original hardcoded endpoint,
+        so a stale/bad config value cannot break the download.  Detailed
+        per-attempt diagnostics are written to the Electrum log only; the user
+        sees a simple message.  No business logic in ``bal.core`` is changed.
+
+        Returns the downloaded dict (empty ``{}`` on failure).
+        """
+        chainname = BalPlugin.chainname
+        configured = self.bal_plugin.WELIST_SERVER.get()
+        candidates = []
+        for base in (configured, "https://welist.bitcoin-after.life/"):
+            if not base:
+                continue
+            base = base if base.endswith("/") else base + "/"
+            url = f"{base}data/{chainname}?page=0&limit=100"
+            if url not in candidates:
+                candidates.append(url)
+
+        result = {}
+        net = Network.get_instance()
+        _logger.info(f"fetch_will_executors_list: network present = {net is not None}")
+        for url in candidates:
+            _logger.info(f"fetch_will_executors_list: trying {url}")
+            try:
+                resp = Willexecutors.send_request("get", url, timeout=20)
+                _logger.info(
+                    f"fetch_will_executors_list: resp type={type(resp).__name__} "
+                    f"len={len(resp) if hasattr(resp, '__len__') else 'n/a'}"
+                )
+                if resp:
+                    result = resp
+                    for w in result:
+                        if w not in ("status", "url"):
+                            Willexecutors.initialize_willexecutor(
+                                result[w], w, None,
+                                old_willexecutors.get(w, None),
+                            )
+                    break
+                _logger.warning(f"fetch_will_executors_list: {url} -> empty response")
+            except Exception as e:
+                _logger.error(
+                    f"fetch_will_executors_list: {url} -> {type(e).__name__}: {e}"
+                )
+        return result
+
+    # Simple, user-facing message shown when the download fails for any reason
+    # (the technical cause is in the Electrum log).
+    DOWNLOAD_FAILED_MESSAGE = (
+        "Could not download the will-executors list.\n\n"
+        "This is usually caused by your internet connection or a firewall, "
+        "not by the plugin. Please check your connection (a VPN often helps) "
+        "and try again."
+    )
+
     def download_list(self, willexecutors, fn_on_success, fn_on_failure=None):
-
-        def on_success(result):
-            self.willexecutors.update(result)
-            fn_on_success(result)
-
-        def on_failure(exec_info):
-            fn_on_failure(exec_info)
-
         if fn_on_failure is None:
             fn_on_failure = log_error
-        welist_server = self.bal_plugin.WELIST_SERVER.get()
-        task = partial(Willexecutors.download_list, willexecutors, welist_server)
-        msg = _(f"Downloading willexecutors list from {welist_server}")
+
+        def task():
+            return self.fetch_will_executors_list(willexecutors)
+
+        def on_success(result):
+            if result:
+                self.willexecutors.update(result)
+                fn_on_success(result)
+            else:
+                self.show_warning(_(self.DOWNLOAD_FAILED_MESSAGE))
+
+        def on_failure(exc_info):
+            _logger.error(f"download_list failed: {exc_info}")
+            self.show_warning(_(self.DOWNLOAD_FAILED_MESSAGE))
+
+        msg = _("Downloading will-executors list...")
         self.waiting_dialog = BalWaitingDialog(
             self, msg, task, on_success, on_failure, exe=False
         )
@@ -933,7 +1027,9 @@ class BalWindow:
 
     def preview_modal_dialog(self):
         self.dw = WillDetailDialog(self)
-        self.dw.show()
+        # This dialog is meant to be modal (per its name); show it on top so it
+        # cannot disappear behind the Electrum window.
+        show_on_top(self.dw)
 
     def update_all(self):
         try:

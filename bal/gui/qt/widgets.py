@@ -694,16 +694,16 @@ class WillWidget(QWidget):
         vlayout = QVBoxLayout()
         self.setLayout(vlayout)
         self.will = parent.bal_window.willitems
-        self.parent = parent
+        self._bal_parent = parent
         for w in self.will:
             if (
                 self.will[w].get_status("REPLACED")
-                and self.parent.bal_window.bal_plugin._hide_replaced
+                and self._bal_parent.bal_window.bal_plugin._hide_replaced
             ):
                 continue
             if (
                 self.will[w].get_status("INVALIDATED")
-                and self.parent.bal_window.bal_plugin._hide_invalidated
+                and self._bal_parent.bal_window.bal_plugin._hide_invalidated
             ):
                 continue
             f = self.will[w].father
@@ -720,7 +720,7 @@ class WillWidget(QWidget):
                 willpushbutton = QPushButton(w)
 
                 willpushbutton.clicked.connect(
-                    partial(self.parent.bal_window.show_transaction, txid=w)
+                    partial(self._bal_parent.bal_window.show_transaction, txid=w)
                 )
                 detaillayout.addWidget(willpushbutton)
                 locktime = str(BalTimestamp(self.will[w].tx.locktime))
@@ -748,24 +748,24 @@ class WillWidget(QWidget):
                 for heir in self.will[w].heirs:
                     if 'w!ll3x3c"' not in heir:
                         decoded_amount = Util.decode_amount(
-                            self.will[w].heirs[heir][3], self.parent.decimal_point
+                            self.will[w].heirs[heir][3], self._bal_parent.decimal_point
                         )
                         detaillayout.addWidget(
                             qlabel(
-                                heir, f"{decoded_amount} {self.parent.base_unit_name}"
+                                heir, f"{decoded_amount} {self._bal_parent.base_unit_name}"
                             )
                         )
                 if self.will[w].we:
                     detaillayout.addWidget(QLabel(""))
                     detaillayout.addWidget(QLabel(_("<b>Willexecutor:</b:")))
                     decoded_amount = Util.decode_amount(
-                        self.will[w].we["base_fee"], self.parent.decimal_point
+                        self.will[w].we["base_fee"], self._bal_parent.decimal_point
                     )
 
                     detaillayout.addWidget(
                         qlabel(
                             self.will[w].we["url"],
-                            f"{decoded_amount} {self.parent.base_unit_name}",
+                            f"{decoded_amount} {self._bal_parent.base_unit_name}",
                         )
                     )
                 detaillayout.addStretch()
