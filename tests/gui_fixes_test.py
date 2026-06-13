@@ -84,6 +84,20 @@ def main(pkg: str) -> int:
     assert "self.parent =" not in dsrc, "self.parent assignment still present"
     print("[OK] no self.parent shadowing in dialogs.py")
 
+    # REGRESSION: BalDialog.closeEvent / hideEvent must NOT stop the task
+    # thread.  Electrum's TaskThread.on_done calls cb_done (often self.accept,
+    # which closes the dialog) BEFORE cb_result (on_success, e.g. updating the
+    # will-executor list).  If the base closeEvent stopped/joined the thread,
+    # the auto-close from accept() would tear the thread down before
+    # on_success ran and the downloaded list would be silently dropped.
+    close_src = inspect.getsource(dialogs_mod.BalDialog.closeEvent)
+    hide_src = inspect.getsource(dialogs_mod.BalDialog.hideEvent)
+    assert "stop_thread" not in close_src, (
+        "BalDialog.closeEvent must not stop the thread (drops download result)")
+    assert "stop_thread" not in hide_src, (
+        "BalDialog.hideEvent must not stop the thread (drops download result)")
+    print("[OK] BalDialog.closeEvent/hideEvent do not kill the task thread")
+
     print(f"\n[OK] all GUI-fix checks passed for package {pkg!r}")
     return 0
 

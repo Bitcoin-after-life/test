@@ -51,14 +51,21 @@ class BalDialog(QDialog,MessageBoxMixin):
         
     def closeEvent(self, event):
         self._stopping = True
-        # Stop and join any background task thread so it does not outlive the
-        # dialog (previously commented out -> orphan threads until restart).
-        stop_thread(getattr(self, "thread", None))
+        # NOTE: we deliberately do NOT stop ``self.thread`` here.
+        #
+        # Electrum's ``TaskThread`` delivers results via ``on_done`` which calls
+        # ``cb_done`` (often ``self.accept`` -> closes this dialog) *before*
+        # ``cb_result`` (``on_success`` -> e.g. updating the will-executor
+        # list).  If we stop/join the thread inside ``closeEvent`` the close
+        # triggered by ``accept`` tears the thread down *before* ``on_success``
+        # runs, so the downloaded data is silently dropped.  The original plugin
+        # left this commented out for exactly this reason; subclasses that own a
+        # genuinely long-lived thread stop it explicitly in their own close
+        # handler.
         super().closeEvent(event)
 
     def hideEvent(self, event):
         self._stopping = True
-        stop_thread(getattr(self, "thread", None))
         super().hideEvent(event)
 
 
