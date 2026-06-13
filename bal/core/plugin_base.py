@@ -315,6 +315,28 @@ class BalTimestamp:
         """Return the duration expressed in days (years are ``*365``)."""
         return self.value * 365 if self.unit == 'y' else self.value
 
+    @staticmethod
+    def _safe_fromtimestamp(ts):
+        """``datetime.fromtimestamp`` that never raises ``OverflowError``.
+
+        On Windows ``time_t`` is 32-bit, so ``datetime.fromtimestamp`` raises
+        ``OverflowError: Python int too large to convert to C int`` for any
+        timestamp past the year-2038 limit (e.g. ``NLOCKTIME_MAX = 2**32 - 1``,
+        used as the default/sentinel locktime).  On 64-bit Linux the same call
+        succeeds, which is why this only crashed on the user's Windows build.
+
+        We clamp out-of-range timestamps to INT32_MAX, mirroring Electrum's own
+        ``get_max_allowed_timestamp`` workaround (see Electrum issue #6170).
+        """
+        INT32_MAX = 2 ** 31 - 1
+        try:
+            return datetime.fromtimestamp(ts)
+        except (OSError, OverflowError, ValueError):
+            try:
+                return datetime.fromtimestamp(min(int(ts), INT32_MAX))
+            except (OSError, OverflowError, ValueError):
+                return datetime.fromtimestamp(INT32_MAX)
+
     def to_date(self, from_date=None, reverse=False):
         """Resolve to a ``datetime``.
 
@@ -323,16 +345,22 @@ class BalTimestamp:
         ``from_date`` (defaulting to *now*), normalised to midnight.
         """
         if self.unit is None:
-            return datetime.fromtimestamp(self.value)
+            return self._safe_fromtimestamp(self.value)
         else:
             if from_date is None:
                 from_date = datetime.now()
             if isinstance(from_date, (int, float)):
-                from_date = datetime.fromtimestamp(from_date)
+                from_date = self._safe_fromtimestamp(from_date)
             reverse = 1 if not reverse else -1
-            return (
-                from_date + (reverse * timedelta(days=self.duration_to_days()))
-            ).replace(hour=0, minute=0, second=0, microsecond=0)
+            try:
+                return (
+                    from_date + (reverse * timedelta(days=self.duration_to_days()))
+                ).replace(hour=0, minute=0, second=0, microsecond=0)
+            except (OverflowError, OSError, ValueError):
+                # Duration overflowed datetime's range; clamp to INT32_MAX.
+                return self._safe_fromtimestamp(2 ** 31 - 1).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
 
     def to_timestamp(self, from_date=None, reverse=False):
         """Same as :meth:`to_date` but returns a UNIX timestamp."""
@@ -340,12 +368,12 @@ class BalTimestamp:
 
     def __str__(self):
         if self.unit is None:
-            return datetime.fromtimestamp(self.value).isoformat()
+            return self._safe_fromtimestamp(self.value).isoformat()
         else:
             return f"{self.value}{self.unit}"
 
     def __repr__(self):
         if self.unit is None:
-            return datetime.fromtimestamp(self.value).to_date().timestamp()
+            return self._safe_fromtimestamp(self.value).isoformat()
         else:
             return f"{self.value}{self.unit}"

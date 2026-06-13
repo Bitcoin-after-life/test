@@ -363,7 +363,12 @@ class Util:
         out = 0
         if locktime > LOCKTIME_THRESHOLD:
             seconds = blocks * 600 + hours * 3600 + days * 86400
-            dt = datetime.fromtimestamp(locktime)
+            # On Windows datetime.fromtimestamp raises OverflowError past 2038
+            # (e.g. NLOCKTIME_MAX); clamp to INT32_MAX (Electrum issue #6170).
+            try:
+                dt = datetime.fromtimestamp(locktime)
+            except (OverflowError, OSError, ValueError):
+                dt = datetime.fromtimestamp(min(locktime, 2 ** 31 - 1))
             dt -= timedelta(seconds=seconds)
             out = dt.timestamp()
         else:
