@@ -911,9 +911,28 @@ class WillExecutorWidget(QWidget, MessageBoxMixin):
         self.will_executor_list_widget.update()
 
     def download_list(self, wes=None):
-        if not wes:
-            wes = self.willexecutors_list
-        self.bal_window.download_list(wes, self.save_willexecutors)
+        # NOTE: the original plugin downloaded the list with a *direct*,
+        # synchronous call on the GUI thread here (NOT via a BalWaitingDialog /
+        # TaskThread).  Routing it through a TaskThread made the request time
+        # out on some setups (Network.send_http_on_proxy behaves differently
+        # depending on the calling thread), so we restore the original direct
+        # call to keep the working behaviour byte-for-byte.
+        result = Willexecutors.download_list(
+            self.bal_window.willexecutors, self.bal_plugin.WELIST_SERVER.get()
+        )
+        if result:
+            self.bal_window.willexecutors.update(result)
+            self.willexecutors_list.update(result)
+            self.will_executor_list_widget.update()
+            Willexecutors.save(self.bal_window.bal_plugin, self.willexecutors_list)
+        else:
+            welist_server = self.bal_plugin.WELIST_SERVER.get()
+            self.bal_window.show_warning(
+                _("Could not download the will-executors list from")
+                + f"\n{welist_server}\n\n"
+                + _("Check your internet connection and the server URL, "
+                    "then try again.")
+            )
         self.update()
 
     def export_file(self, path):
