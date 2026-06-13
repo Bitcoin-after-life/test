@@ -895,64 +895,94 @@ class BalWindow:
             _logger.error(f"impossible to update will_executor_list_widget {e}")
         self.will_executors.update()
 
-    def download_list(self, willexecutors, fn_on_success, fn_on_failure=None):
-        welist_server = self.bal_plugin.WELIST_SERVER.get()
+    def fetch_will_executors_list(self, old_willexecutors):
+        """Download the will-executor list synchronously, like the original.
 
-        def task():
-            # Runs in the TaskThread worker.  ``Willexecutors.download_list``
-            # swallows its own errors and returns ``{}``; to be able to *show*
-            # the real cause to the user we re-issue the same raw request here
-            # and capture the exception text when the result is empty.  This
-            # does NOT change the business logic in ``bal.core`` - it only adds
-            # GUI-side diagnostics.
-            result = Willexecutors.download_list(willexecutors, welist_server)
-            if result:
-                return result, None
+        Returns ``(result_dict, errors_list, control_probe_str)``.  The original
+        plugin performed this download with a *direct* synchronous call on the
+        GUI thread (NOT via a TaskThread); routing it through a TaskThread made
+        the request time out on some setups, so this shared helper restores the
+        original behaviour and is used by BOTH the wizard and the
+        "Download List" button.
+
+        It tries the configured server first, then the original hardcoded
+        endpoint, so a stale/bad config value cannot break the download.  No
+        business logic in ``bal.core`` is changed.
+        """
+        chainname = BalPlugin.chainname
+        configured = self.bal_plugin.WELIST_SERVER.get()
+        candidates = []
+        for base in (configured, "https://welist.bitcoin-after.life/"):
+            if not base:
+                continue
+            base = base if base.endswith("/") else base + "/"
+            url = f"{base}data/{chainname}?page=0&limit=100"
+            if url not in candidates:
+                candidates.append(url)
+
+        result = {}
+        errors = []
+        net = Network.get_instance()
+        _logger.info(f"fetch_will_executors_list: network present = {net is not None}")
+        for url in candidates:
+            _logger.info(f"fetch_will_executors_list: trying {url}")
             try:
-                server = welist_server if welist_server.endswith("/") else welist_server + "/"
-                raw = Willexecutors.send_request(
-                    "get",
-                    f"{server}data/{BalPlugin.chainname}?page=0&limit=100",
+                resp = Willexecutors.send_request("get", url, timeout=20)
+                _logger.info(
+                    f"fetch_will_executors_list: resp type={type(resp).__name__} "
+                    f"len={len(resp) if hasattr(resp, '__len__') else 'n/a'}"
                 )
-                # Got a response but the parsed list was still empty.
-                detail = (_("The server returned no will-executors.")
-                          if raw is not None
-                          else _("No response from the server (timeout?)."))
+                if resp:
+                    result = resp
+                    for w in result:
+                        if w not in ("status", "url"):
+                            Willexecutors.initialize_willexecutor(
+                                result[w], w, None,
+                                old_willexecutors.get(w, None),
+                            )
+                    break
+                errors.append(f"{url}: empty response")
             except Exception as e:
-                detail = f"{type(e).__name__}: {e}"
-            return {}, detail
-
-        def on_success(packed):
-            result, detail = packed
-            _logger.info(
-                f"download_list: received {len(result) if result else 0} "
-                f"will-executor(s) from {welist_server}"
-                + (f" (detail: {detail})" if detail else "")
-            )
-            self.willexecutors.update(result)
-            fn_on_success(result)
-            if not result:
-                msg = (
-                    _("Could not download the will-executors list from")
-                    + f"\n{welist_server}\n\n"
+                _logger.error(
+                    f"fetch_will_executors_list: {url} -> {type(e).__name__}: {e}"
                 )
-                if detail:
-                    msg += _("Reason:") + f" {detail}\n\n"
-                msg += _("Check your internet connection and the server URL, "
-                         "then try again.")
-                self.show_warning(msg)
+                errors.append(f"{url}: {type(e).__name__}: {e}")
 
-        def on_failure(exec_info):
-            _logger.error(f"download_list failed: {exec_info}")
-            fn_on_failure(exec_info)
+        control = ""
+        if not result and candidates:
+            control = self._direct_https_probe(candidates[0])
+        return result, errors, control
 
+    @staticmethod
+    def _direct_https_probe(url):
+        """Direct HTTPS GET bypassing Electrum's Network layer (diagnostics)."""
+        if not url:
+            return "skipped (no url)"
+        try:
+            import urllib.request
+            req = urllib.request.Request(url, headers={"user-agent": "BalPlugin-probe"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = r.read()
+                return f"OK (HTTP {r.status}, {len(data)} bytes)"
+        except Exception as e:
+            return f"{type(e).__name__}: {e}"
+
+    def download_list(self, willexecutors, fn_on_success, fn_on_failure=None):
         if fn_on_failure is None:
             fn_on_failure = log_error
-        msg = _(f"Downloading willexecutors list from {welist_server}")
-        self.waiting_dialog = BalWaitingDialog(
-            self, msg, task, on_success, on_failure, exe=False
-        )
-        self.waiting_dialog.exe()
+        result, errors, control = self.fetch_will_executors_list(willexecutors)
+        if result:
+            self.willexecutors.update(result)
+            fn_on_success(result)
+        else:
+            detail = "\n".join(errors) if errors else _("Unknown error")
+            self.show_warning(
+                _("Could not download the will-executors list.")
+                + "\n\n" + _("Details (via Electrum network):") + f"\n{detail}\n\n"
+                + _("Direct connection test:") + f"\n{control}\n\n"
+                + _("Check your internet connection and the server URL, "
+                    "then try again.")
+            )
 
     def ping_willexecutors_task(self, wes):
         _logger.info("ping willexecutots task")
