@@ -898,24 +898,49 @@ class BalWindow:
     def download_list(self, willexecutors, fn_on_success, fn_on_failure=None):
         welist_server = self.bal_plugin.WELIST_SERVER.get()
 
-        def on_success(result):
-            # ``Willexecutors.download_list`` swallows its own errors and
-            # returns ``{}`` on any failure, so an empty result here means the
-            # download effectively failed.  Previously this was silent (the
-            # list just never changed); now we log it and tell the user.
+        def task():
+            # Runs in the TaskThread worker.  ``Willexecutors.download_list``
+            # swallows its own errors and returns ``{}``; to be able to *show*
+            # the real cause to the user we re-issue the same raw request here
+            # and capture the exception text when the result is empty.  This
+            # does NOT change the business logic in ``bal.core`` - it only adds
+            # GUI-side diagnostics.
+            result = Willexecutors.download_list(willexecutors, welist_server)
+            if result:
+                return result, None
+            try:
+                server = welist_server if welist_server.endswith("/") else welist_server + "/"
+                raw = Willexecutors.send_request(
+                    "get",
+                    f"{server}data/{BalPlugin.chainname}?page=0&limit=100",
+                )
+                # Got a response but the parsed list was still empty.
+                detail = (_("The server returned no will-executors.")
+                          if raw is not None
+                          else _("No response from the server (timeout?)."))
+            except Exception as e:
+                detail = f"{type(e).__name__}: {e}"
+            return {}, detail
+
+        def on_success(packed):
+            result, detail = packed
             _logger.info(
                 f"download_list: received {len(result) if result else 0} "
                 f"will-executor(s) from {welist_server}"
+                + (f" (detail: {detail})" if detail else "")
             )
             self.willexecutors.update(result)
             fn_on_success(result)
             if not result:
-                self.show_warning(
+                msg = (
                     _("Could not download the will-executors list from")
                     + f"\n{welist_server}\n\n"
-                    + _("Check your internet connection and the server URL, "
-                        "then try again.")
                 )
+                if detail:
+                    msg += _("Reason:") + f" {detail}\n\n"
+                msg += _("Check your internet connection and the server URL, "
+                         "then try again.")
+                self.show_warning(msg)
 
         def on_failure(exec_info):
             _logger.error(f"download_list failed: {exec_info}")
@@ -923,7 +948,6 @@ class BalWindow:
 
         if fn_on_failure is None:
             fn_on_failure = log_error
-        task = partial(Willexecutors.download_list, willexecutors, welist_server)
         msg = _(f"Downloading willexecutors list from {welist_server}")
         self.waiting_dialog = BalWaitingDialog(
             self, msg, task, on_success, on_failure, exe=False
