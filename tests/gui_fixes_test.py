@@ -115,6 +115,23 @@ def main(pkg: str) -> int:
         "on_close must reset _menubar_initialized so the window can be reused")
     print("[OK] init_menubar_tools is idempotent (no duplicate tabs/menu)")
 
+    # REGRESSION: create_status_bar must stay a no-op, like the original plugin
+    # (whose body had an early ``return`` before building the StatusBarButton).
+    # Re-adding the status-bar button made a stray condensed icon+text element
+    # appear in the wrong place after restart / wallet switch.
+    csb_src = inspect.getsource(plugin_mod.Plugin.create_status_bar)
+    csb_active = _active_source_without_strings(plugin_mod)  # whole module sans strings
+    csb_body = inspect.getsource(plugin_mod.Plugin.create_status_bar)
+    # The executable body must not add a permanent widget / build the button.
+    # Strip comments to avoid matching the explanatory note.
+    csb_code = "\n".join(
+        line for line in csb_body.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "addPermanentWidget" not in csb_code, (
+        "create_status_bar must not add a status-bar widget (original is a no-op)")
+    print("[OK] create_status_bar is a no-op (matches original)")
+
     print(f"\n[OK] all GUI-fix checks passed for package {pkg!r}")
     return 0
 
