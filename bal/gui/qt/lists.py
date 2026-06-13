@@ -913,23 +913,62 @@ class WillExecutorWidget(QWidget, MessageBoxMixin):
     def download_list(self, wes=None):
         # NOTE: the original plugin downloaded the list with a *direct*,
         # synchronous call on the GUI thread here (NOT via a BalWaitingDialog /
-        # TaskThread).  Routing it through a TaskThread made the request time
-        # out on some setups (Network.send_http_on_proxy behaves differently
-        # depending on the calling thread), so we restore the original direct
-        # call to keep the working behaviour byte-for-byte.
-        result = Willexecutors.download_list(
-            self.bal_window.willexecutors, self.bal_plugin.WELIST_SERVER.get()
-        )
+        # TaskThread).  We keep that behaviour and add precise diagnostics so a
+        # failure shows the *exact* URL and error instead of a generic timeout.
+        from electrum.network import Network
+
+        chainname = BalPlugin.chainname
+        # The original used this hardcoded URL; the refactor made it
+        # configurable.  Try the configured server first, then fall back to the
+        # original hardcoded endpoint, so a bad/stale config value cannot break
+        # the download.
+        configured = self.bal_plugin.WELIST_SERVER.get()
+        candidates = []
+        for base in (configured, "https://welist.bitcoin-after.life/"):
+            if not base:
+                continue
+            base = base if base.endswith("/") else base + "/"
+            url = f"{base}data/{chainname}?page=0&limit=100"
+            if url not in candidates:
+                candidates.append(url)
+
+        result = {}
+        errors = []
+        net = Network.get_instance()
+        _logger.info(f"download_list: network instance present = {net is not None}")
+        for url in candidates:
+            _logger.info(f"download_list: trying {url}")
+            try:
+                resp = Willexecutors.send_request("get", url, timeout=20)
+                _logger.info(
+                    f"download_list: response type={type(resp).__name__} "
+                    f"len={len(resp) if hasattr(resp, '__len__') else 'n/a'}"
+                )
+                if resp:
+                    result = resp
+                    for w in result:
+                        if w not in ("status", "url"):
+                            Willexecutors.initialize_willexecutor(
+                                result[w], w, None,
+                                self.bal_window.willexecutors.get(w, None),
+                            )
+                    break
+                else:
+                    errors.append(f"{url}: empty response")
+            except Exception as e:
+                _logger.error(f"download_list: {url} -> {type(e).__name__}: {e}")
+                errors.append(f"{url}: {type(e).__name__}: {e}")
+
         if result:
             self.bal_window.willexecutors.update(result)
             self.willexecutors_list.update(result)
             self.will_executor_list_widget.update()
             Willexecutors.save(self.bal_window.bal_plugin, self.willexecutors_list)
         else:
-            welist_server = self.bal_plugin.WELIST_SERVER.get()
+            detail = "\n".join(errors) if errors else _("Unknown error")
             self.bal_window.show_warning(
-                _("Could not download the will-executors list from")
-                + f"\n{welist_server}\n\n"
+                _("Could not download the will-executors list.")
+                + "\n\n" + _("Details:") + f"\n{detail}\n\n"
                 + _("Check your internet connection and the server URL, "
                     "then try again.")
             )
