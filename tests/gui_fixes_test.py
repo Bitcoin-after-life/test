@@ -98,6 +98,23 @@ def main(pkg: str) -> int:
         "BalDialog.hideEvent must not stop the thread (drops download result)")
     print("[OK] BalDialog.closeEvent/hideEvent do not kill the task thread")
 
+    # REGRESSION: init_menubar_tools must be idempotent.  Electrum can invoke
+    # both the init_menubar hook and the hot-init path (init_qt -> _setup_window)
+    # for the same window (e.g. on restart with the plugin already enabled);
+    # wiring the tabs/menu actions twice produces a garbled, condensed menu
+    # entry under the Electrum logo.  Verify the guard flag is in place.
+    bal_window_cls = win_mod.BalWindow
+    menubar_src = inspect.getsource(bal_window_cls.init_menubar_tools)
+    assert "_menubar_initialized" in menubar_src, (
+        "init_menubar_tools must guard against double initialisation")
+    init_src = inspect.getsource(bal_window_cls.__init__)
+    assert "_menubar_initialized" in init_src, (
+        "_menubar_initialized must be initialised in BalWindow.__init__")
+    onclose_src = inspect.getsource(bal_window_cls.on_close)
+    assert "_menubar_initialized" in onclose_src, (
+        "on_close must reset _menubar_initialized so the window can be reused")
+    print("[OK] init_menubar_tools is idempotent (no duplicate tabs/menu)")
+
     print(f"\n[OK] all GUI-fix checks passed for package {pkg!r}")
     return 0
 
