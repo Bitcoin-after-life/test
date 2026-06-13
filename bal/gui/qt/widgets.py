@@ -404,7 +404,9 @@ class LockTimeDateEdit(QDateTimeEdit, _LockTimeEditor):
         except Exception as e:
             x = QDateTime.currentDateTime().timestamp()
         finally:
-            _dt = datetime.fromtimestamp(x)
+            # Use the overflow-safe converter: on Windows datetime.fromtimestamp
+            # raises OverflowError for timestamps past 2038 (e.g. NLOCKTIME_MAX).
+            _dt = BalTimestamp._safe_fromtimestamp(x)
             #if self.alarm != dt:
             self.setDateTime(_dt)
             self.alarm = _dt

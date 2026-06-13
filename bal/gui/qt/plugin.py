@@ -88,14 +88,15 @@ class Plugin(BalPlugin):
 
     @hook
     def create_status_bar(self, sb):
-        _logger.info("HOOK create status bar")
-        b = StatusBarButton(
-            read_QIcon_from_bytes(self.read_file("icons/bal32x32.png")),
-            "Bal " + _("Bitcoin After Life"),
-            partial(self.settings_dialog, sb),
-            sb.height(),
-        )
-        sb.addPermanentWidget(b)
+        # NOTE: intentionally a no-op, matching the original plugin.  The
+        # original code had an early ``return`` before building the
+        # StatusBarButton, i.e. the button was deliberately disabled.  Adding
+        # the button here caused a stray, condensed icon+text element to be
+        # rendered in the wrong place (near the top, under the Electrum logo)
+        # after a restart / wallet switch.  Settings are already reachable via
+        # Tools -> Plugins, so we keep the original behaviour.
+        _logger.info("HOOK create status bar (no-op)")
+        return
 
     @hook
     def init_menubar(self, window):

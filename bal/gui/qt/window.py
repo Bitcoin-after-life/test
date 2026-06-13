@@ -34,6 +34,13 @@ class BalWindow:
         self.will_settings = None
         self.ok = False
         self.disable_plugin = True
+        # Guard against wiring the menu/tabs more than once for the same window.
+        # Electrum may invoke both the ``init_menubar`` hook and our hot-init
+        # path (``init_qt`` -> ``_setup_window``) for the same window, e.g. when
+        # Electrum restarts with the plugin already enabled.  Calling
+        # ``init_menubar_tools`` twice would add the Heirs/Will tabs and the
+        # menu actions twice, producing the garbled/condensed menu entry.
+        self._menubar_initialized = False
         self.bal_plugin.get_decimal_point = self.window.get_decimal_point
 
         if self.window.wallet:
@@ -49,6 +56,15 @@ class BalWindow:
             self.will_tab.wallet = self.wallet
 
     def init_menubar_tools(self, tools_menu):
+        # Idempotent: only wire the tabs + menu actions once per window.
+        # A second call (e.g. init_menubar hook *and* the hot-init path both
+        # firing) would otherwise duplicate the Heirs/Will tabs and the
+        # Will-Executors / toggle actions, which Qt renders as a broken,
+        # condensed menu entry under the Electrum logo.
+        if self._menubar_initialized:
+            _logger.info("init_menubar_tools: already initialised, skipping")
+            return
+        self._menubar_initialized = True
         self.tools_menu = tools_menu
 
         def add_optional_tab(tabs, tab, icon, description):
@@ -707,6 +723,9 @@ class BalWindow:
         self.willexecutors = {}
         self.disable_plugin = True
         self.ok = False
+        # The tabs/menu actions were removed above; allow init_menubar_tools to
+        # re-wire them if this same window is reused for another wallet.
+        self._menubar_initialized = False
 
     def ask_password_and_sign_transactions(self, callback=None):
         def on_success(txs):
