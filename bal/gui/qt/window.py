@@ -145,7 +145,9 @@ class BalWindow:
 
     def show_willexecutor_dialog(self):
         self.willexecutor_dialog = WillExecutorDialog(self)
-        self.willexecutor_dialog.show()
+        # Keep it in front of Electrum (window-modal) instead of letting it
+        # fall behind the main window.
+        show_on_top(self.willexecutor_dialog)
 
     def create_heirs_tab(self):
         if not self.heirs:
@@ -563,7 +565,8 @@ class BalWindow:
                 _("Electrum was unable to deserialize the transaction:") + "\n" + str(e)
             )
         else:
-            d.show()
+            # Electrum's own TxDialog: keep it in front of the main window.
+            show_on_top(d, modal_to_window=False)
             return d
 
     def show_transaction(self, tx=None, txid=None, parent=None):
@@ -662,19 +665,48 @@ class BalWindow:
         return password
 
     def on_close(self):
+        # Wallet is closing: run the closing "build will" task and tear down
+        # the plugin's tabs/menu.  Each step is isolated so that one failure
+        # does not leave the GUI half-initialised (which previously forced the
+        # user to restart Electrum).  Errors are logged instead of silently
+        # swallowed.
+        if self.disable_plugin:
+            return
+
+        # 1) Business logic: build/save the will on close (unchanged behaviour).
         try:
-            if not self.disable_plugin:
-                close_window = BalBuildWillDialog(self)
-                close_window.build_will_task()
-                self.save_willitems()
-                self.heirs_tab.close()
-                self.will_tab.close()
-                self.tools_menu.removeAction(self.tools_menu.willexecutors_action)
-                self.window.toggle_tab(self.heirs_tab)
-                self.window.toggle_tab(self.will_tab)
-                self.window.tabs.update()
-        except Exception:
-            pass
+            close_window = BalBuildWillDialog(self)
+            close_window.build_will_task()
+            self.save_willitems()
+        except Exception as e:
+            _logger.error(f"on_close: build/save will failed: {e}")
+
+        # 2) GUI teardown - each action guarded independently.
+        def _safe(desc, fn):
+            try:
+                fn()
+            except Exception as e:
+                _logger.error(f"on_close: {desc} failed: {e}")
+
+        _safe("close heirs tab", lambda: self.heirs_tab.close())
+        _safe("close will tab", lambda: self.will_tab.close())
+        _safe(
+            "remove willexecutors menu action",
+            lambda: self.tools_menu.removeAction(
+                self.tools_menu.willexecutors_action
+            ),
+        )
+        _safe("toggle heirs tab off", lambda: self.window.toggle_tab(self.heirs_tab))
+        _safe("toggle will tab off", lambda: self.window.toggle_tab(self.will_tab))
+        _safe("refresh tabs", lambda: self.window.tabs.update())
+
+        # 3) Reset in-memory state so re-enabling/re-opening starts clean.
+        self.willitems = {}
+        self.will = {}
+        self.heirs = {}
+        self.willexecutors = {}
+        self.disable_plugin = True
+        self.ok = False
 
     def ask_password_and_sign_transactions(self, callback=None):
         def on_success(txs):
@@ -933,7 +965,9 @@ class BalWindow:
 
     def preview_modal_dialog(self):
         self.dw = WillDetailDialog(self)
-        self.dw.show()
+        # This dialog is meant to be modal (per its name); show it on top so it
+        # cannot disappear behind the Electrum window.
+        show_on_top(self.dw)
 
     def update_all(self):
         try:

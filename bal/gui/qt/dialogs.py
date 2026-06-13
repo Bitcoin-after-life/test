@@ -37,9 +37,13 @@ class BalDialog(QDialog,MessageBoxMixin):
             QMetaObject.invokeMethod(self, "close", Qt.ConnectionType.QueuedConnection)
 
         #signal.signal(signal.SIGINT, handler)
-        self.parent = parent
+        # NOTE: do NOT store this as ``self.parent`` - that would shadow
+        # QWidget.parent() and can make the dialog disappear behind Electrum.
+        self._bal_parent = parent
         self.thread = None
-        super().__init__(parent) 
+        # Anchor the dialog to the *top-level* Electrum window so it always
+        # stays in front of it (instead of falling behind).
+        super().__init__(top_level_of(parent))
         if title:
             self.setWindowTitle(title)
         # WindowModalDialog.__init__(self,parent)
@@ -47,14 +51,14 @@ class BalDialog(QDialog,MessageBoxMixin):
         
     def closeEvent(self, event):
         self._stopping = True
-        #if self.thread:
-        #    self.thread.stop()
+        # Stop and join any background task thread so it does not outlive the
+        # dialog (previously commented out -> orphan threads until restart).
+        stop_thread(getattr(self, "thread", None))
         super().closeEvent(event)
 
     def hideEvent(self, event):
         self._stopping = True
-        #if self.thread:
-        #    self.thread.stop()
+        stop_thread(getattr(self, "thread", None))
         super().hideEvent(event)
 
 
@@ -66,7 +70,7 @@ class BalWizardDialog(BalDialog):
         )
         self.setMinimumSize(800, 400)
         self.bal_window = bal_window
-        self.parent = bal_window.window
+        self._bal_parent = bal_window.window
         self.layout = QVBoxLayout(self)
         self.widget = BalWizardHeirsWidget(
             bal_window, self, self.on_next_heir, None, self.on_cancel_heir
@@ -158,7 +162,7 @@ class BalWizardWidget(QWidget):
         QWidget.__init__(self, parent)
         self.vbox = QVBoxLayout(self)
         self.bal_window = bal_window
-        self.parent = parent
+        self._bal_parent = parent
         self.on_next = on_next
         self.on_cancel = on_cancel
         self.titleLabel = QLabel(self.title)
@@ -198,7 +202,7 @@ class BalWizardWidget(QWidget):
 
     def _on_cancel(self):
         self.on_cancel()
-        self.parent.close()
+        self._bal_parent.close()
 
     def _on_next(self):
         if self.validate():
@@ -418,7 +422,8 @@ class BalWaitingDialog(BalDialog):
         self.thread.finished.connect(self.deleteLater)  # see #3956
         self.thread.finished.connect(self.finished)
         self.thread.add(self.task, self.on_success, self.accept, self.on_error)
-        self.exec()
+        # Window-modal + brought to front so the waiting dialog stays visible.
+        show_modal(self)
 
     def hello(self):
         pass
@@ -449,11 +454,14 @@ class BalBlockingWaitingDialog(BalDialog):
         vbox = QVBoxLayout(self)
         vbox.addWidget(self.message_label)
         self.finished.connect(self.deleteLater)  # see #3956
-        # show popup
-        self.show()
-        # refresh GUI; needed for popup to appear and for message_label to get drawn
-        # QCoreApplication.processEvents()
-        # QCoreApplication.processEvents()
+        # show popup (window-modal + on top so it is actually visible)
+        show_on_top(self)
+        # Refresh the GUI so the popup is painted (and message_label drawn)
+        # BEFORE we block the GUI thread running the task; otherwise the popup
+        # appears empty/frozen.
+        from PyQt6.QtWidgets import QApplication
+        QApplication.processEvents()
+        QApplication.processEvents()
         try:
             # block and run given task
             task()
@@ -472,7 +480,7 @@ class BalBuildWillDialog(BalDialog):
         if not parent:
             parent = bal_window.window
         BalDialog.__init__(self, parent, bal_window.bal_plugin, _("Building Will"))
-        self.parent = parent
+        # (parent already stored as self._bal_parent by BalDialog.__init__)
         self.updatemessage.connect(self.msg_update)
         self.bal_window = bal_window
         self.bal_plugin = bal_window.bal_plugin
@@ -507,8 +515,9 @@ class BalBuildWillDialog(BalDialog):
             on_done=self.on_accept,
             on_error=self.on_error_phase1,
         )
-        self.show()
-        self.exec()
+        # exec() already shows the dialog modally; route through the helper so
+        # it is window-modal and brought to the front (no separate show()).
+        show_modal(self)
 
     def task_phase1(self):
         if self._stopping:
@@ -827,7 +836,10 @@ class BalBuildWillDialog(BalDialog):
 
     def closeEvent(self, event):
         self._stopping = True
-        self.thread.stop()
+        # Stop AND join the thread, then propagate the close event (previously
+        # it neither waited nor called super().closeEvent()).
+        stop_thread(getattr(self, "thread", None))
+        super().closeEvent(event)
 
     def task_phase2(self, password):
         if self._stopping:
@@ -1119,7 +1131,9 @@ class WillExecutorDialog(BalDialog, MessageBoxMixin):
 
     def bring_to_top(self):
         self.show()
-        self.raise_()
+        # raise_() alone does not grab focus on some window managers (Windows);
+        # activateWindow() ensures the dialog actually comes to the front.
+        bring_to_front(self)
 
     def closeEvent(self, event):
         event.accept()

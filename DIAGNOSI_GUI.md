@@ -1,8 +1,34 @@
-# BAL — Diagnosi dei problemi GUI (Fase A)
+# BAL — Diagnosi dei problemi GUI (Fase A) → ✅ RISOLTI (Fase B)
 
-Documento di sola **diagnosi**: nessuna riga di codice funzionale è stata
-modificata. Elenca i problemi grafici/di ciclo di vita riscontrati nel codice,
-la loro **causa tecnica** e il **fix proposto**, con riferimenti riga.
+> **STATO: tutti i bug B1-B10 sono stati CORRETTI** sul branch
+> `fix/gui-window-lifecycle`. La logica di business resta **byte-identica**
+> (nessuna modifica a `bal/core/*`): sono cambiati solo presentazione, parent,
+> modalità, ciclo di vita e cleanup delle finestre.
+>
+> | ID | Stato | Fix applicato |
+> |----|-------|---------------|
+> | B1 | ✅ FIXED | `self.parent` → `self._bal_parent` (dialogs/lists/widgets); parent = `top_level_of(parent)` |
+> | B2 | ✅ FIXED | `.show()` → `show_on_top()` / `show_modal()` con parent corretto |
+> | B3 | ✅ FIXED | init a caldo: `_setup_window()` replica `load_wallet`, niente "restart Electrum" |
+> | B4 | ✅ FIXED | chiave finestra stabile `_window_key()` = `id(window)` |
+> | B5 | ✅ FIXED | `on_close` riscritto: niente `except:pass`, log per-step, reset stato |
+> | B6 | ✅ FIXED | `BalBlockingWaitingDialog`: `processEvents()` ripristinato |
+> | B7 | ✅ FIXED | `closeEvent/hideEvent`: `stop_thread()` + `super()` |
+> | B8 | ✅ FIXED | `closeEvent`: `stop_thread()` (stop+wait) + `super()` |
+> | B9 | ✅ FIXED | `bring_to_front()` = `raise_()` + `activateWindow()` |
+> | B10| ✅ FIXED | uso di `window.tools_menu` (API ufficiale), niente ricerca per titolo `&Tools` |
+>
+> Helper centralizzati in `bal/gui/qt/window_utils.py`:
+> `top_level_of`, `bring_to_front`, `stop_thread`, `show_modal`, `show_on_top`.
+> Test di regressione: `tests/gui_fixes_test.py` (oltre a smoke + external_zip).
+
+---
+
+## (Storico) Diagnosi originale
+
+Documento di sola **diagnosi**: nessuna riga di codice funzionale era stata
+modificata in Fase A. Elenca i problemi grafici/di ciclo di vita riscontrati nel
+codice, la loro **causa tecnica** e il **fix proposto**, con riferimenti riga.
 
 I due sintomi che hai segnalato:
 - **(S1)** Le finestre del plugin spariscono dietro la finestra di Electrum.
