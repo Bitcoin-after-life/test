@@ -1,7 +1,7 @@
 # BAL — Diagnosi dei problemi GUI (Fase A) → ✅ RISOLTI (Fase B)
 
-> **STATO: tutti i bug B1-B10 sono stati CORRETTI** sul branch
-> `fix/gui-window-lifecycle`. La logica di business resta **byte-identica**
+> **STATO: tutti i bug B1-B10 sono stati CORRETTI** e mergiati in `main`
+> (PR #2, squash `dd6f677`). La logica di business resta **byte-identica**
 > (nessuna modifica a `bal/core/*`): sono cambiati solo presentazione, parent,
 > modalità, ciclo di vita e cleanup delle finestre.
 >

@@ -231,3 +231,170 @@ Tutti i test passano sotto Electrum 4.7.2 + PyQt6.
   Electrum più recente.
 - Prima del rilascio è consigliata una prova **end-to-end in una sessione
   Electrum reale** (preferibilmente su testnet), oltre agli smoke test.
+
+---
+
+## 9. CORREZIONI GUI — finestre e ciclo di vita (B1-B10)
+
+Dopo il refactoring di struttura sono stati corretti **dieci difetti grafici e
+di ciclo di vita** delle finestre, già presenti nel codice originale. La logica
+di business è rimasta **byte-identica** (nessuna modifica a `bal/core/*`): sono
+cambiati solo **presentazione, parent, modalità, z-order, ciclo di vita e
+cleanup** delle finestre Qt.
+
+Sintomi segnalati dall'utente, ora risolti:
+- **(S1)** le finestre del plugin sparivano dietro la finestra di Electrum;
+- **(S2)** alcuni meccanismi funzionavano solo dopo aver chiuso e riavviato
+  Electrum.
+
+| ID  | Problema (presente nell'originale)                                   | Correzione applicata |
+|-----|----------------------------------------------------------------------|----------------------|
+| B1  | `self.parent = parent` sovrascriveva il metodo `parent()` di Qt, rompendo la gerarchia delle finestre | rinominato in `self._bal_parent` (in `dialogs.py`, `lists.py`, `widgets.py`); il parent reale passa da `top_level_of(parent)` |
+| B2  | dialoghi aperti con `.show()` non modale → finivano sotto la finestra principale | sostituiti con `show_on_top()` / `show_modal()` e parent corretto |
+| B3  | messaggio "Please restart Electrum to activate the BAL plugin": il plugin si attivava solo dopo riavvio | inizializzazione **a caldo** con `_setup_window()` che replica `load_wallet` — niente più riavvio |
+| B4  | chiave del dizionario finestre usava il **metodo** `winId` invece del valore | chiave stabile `_window_key()` basata su `id(window)` |
+| B5  | `on_close` ingoiava tutti gli errori con `except: pass` | riscritto: niente `except:pass`, log per ogni passo, reset pulito dello stato |
+| B6  | `BalBlockingWaitingDialog` bloccava il thread della GUI (`processEvents` commentato) | ripristinato `processEvents()` → GUI reattiva durante l'attesa |
+| B7  | `closeEvent`/`hideEvent` con cleanup del thread commentato | gestione esplicita di `closeEvent`/`hideEvent` + chiamata a `super()` |
+| B8  | `closeEvent` incompleto in alcuni dialog | gestione uniforme dello stato di chiusura |
+| B9  | `show()+raise_()` senza `activateWindow()` né modalità → finestra non in primo piano | `bring_to_front()` = `raise_()` + `activateWindow()` |
+| B10 | gestione multi-wallet / multi-finestra fragile; menu cercato per titolo `&Tools` | uso dell'API ufficiale `window.tools_menu` |
+
+### Nuovo modulo: `gui/qt/window_utils.py` (119 righe)
+
+Gli helper per la gestione delle finestre sono stati **centralizzati** in un
+unico modulo, così la stessa logica non viene duplicata nei vari dialog:
+
+- `top_level_of(widget)` — risale alla finestra di primo livello corretta da
+  usare come parent;
+- `bring_to_front(window)` — `raise_()` + `activateWindow()` per portare in
+  primo piano;
+- `stop_thread(thread)` — stop+wait sicuro di un `TaskThread`;
+- `show_modal(dialog)` — apertura modale corretta (`exec()`);
+- `show_on_top(window)` — apertura non modale ma sopra le altre finestre.
+
+`gui/qt/common.py` importa questi helper e li rende disponibili al resto della
+GUI.
+
+---
+
+## 10. CORREZIONE BUG: download lista will-executor
+
+Dopo l'installazione del pacchetto con le correzioni GUI, l'utente ha
+segnalato che il comando **"download list"** dei will-executor non scaricava
+più la lista.
+
+### Indagine
+
+Il codice di rete (`core/willexecutors.py`: `send_request`, `handle_response`,
+`download_list`, `initialize_willexecutor`) è stato confrontato riga per riga
+con l'originale Gitea ed è risultato **byte-identico** (l'unica differenza è il
+parametro aggiuntivo `welist_server` in `download_list`, retro-compatibile).
+
+Durante l'indagine sono comunque emersi e stati corretti **due difetti reali**
+introdotti dalle correzioni GUI, che potevano "perdere" il risultato del
+download:
+
+1. **`BalDialog.closeEvent`/`hideEvent` fermavano il `TaskThread`.** In Electrum
+   `TaskThread.on_done` esegue `cb_done` (cioè `self.accept`, che **chiude** il
+   dialog) **prima** di `cb_result` (cioè `on_success`, che **aggiorna** la
+   lista). Fermare il thread alla chiusura del dialog **scartava** quindi il
+   risultato appena scaricato. → I due metodi sono stati riportati a **non**
+   fermare il thread (con commento esplicativo nel codice).
+2. **`BalWaitingDialog.exe()` usava una modalità sbagliata** (`show_modal` /
+   `WindowModal`). → Ripristinato l'originale `self.exec()`, aggiungendo prima
+   `bring_to_front(self)` per garantire il primo piano.
+
+Inoltre i percorsi del **pulsante** e del **wizard** (che prima scaricavano in
+modi diversi e con messaggi diversi) sono stati **unificati** in un unico
+helper `fetch_will_executors_list`, eseguito dentro il worker del `TaskThread`.
+
+### Causa vera del mancato download: ambientale, NON del plugin
+
+Una probe di controllo con `urllib` che **bypassava completamente Electrum**
+falliva ugualmente con `WinError 10054` ("connection forcibly closed by remote
+host"): segno che la **rete/ISP dell'utente resettava la connessione HTTPS**
+verso `welist.bitcoin-after.life`. La conferma definitiva: **attivando una VPN
+il download è andato a buon fine.**
+
+L'originale "sembrava" funzionare perché spedisce comunque un will-executor di
+**default già incorporato** (`https://we.bitcoin-after.life`), quindi la lista
+non risultava mai del tutto vuota anche senza un download riuscito.
+
+### Pulizia finale (scelta dall'utente — "Opzione 1")
+
+- **Finestra di attesa non bloccante** mantenuta (`BalWaitingDialog`), così la
+  GUI non si congela durante il download.
+- **Fallback dell'URL**: prima l'URL configurato (`WELIST_SERVER`), poi quello
+  hardcoded `https://welist.bitcoin-after.life/`.
+- **Diagnostica dettagliata spostata nei soli log** (rimossa la probe `urllib`
+  dall'interfaccia).
+- **Messaggio d'errore semplice per l'utente, in inglese** (`DOWNLOAD_FAILED_MESSAGE`):
+
+  > *"Could not download the will-executors list. This is usually caused by
+  > your internet connection or a firewall, not by the plugin. Please check
+  > your connection (a VPN often helps) and try again."*
+
+### File toccati (solo presentazione/GUI, logica invariata)
+
+- `gui/qt/window.py` — helper condiviso `fetch_will_executors_list`,
+  `download_list` con `TaskThread` + `BalWaitingDialog`, costante
+  `DOWNLOAD_FAILED_MESSAGE`.
+- `gui/qt/lists.py` — `WillExecutorWidget.download_list` instradato sul
+  percorso condiviso con `on_success` che aggiorna/salva la lista.
+- `gui/qt/dialogs.py` — `BalDialog.closeEvent`/`hideEvent` **non** fermano più
+  il thread; `BalWaitingDialog.exe()` torna a `self.exec()` + `bring_to_front`.
+- `tests/gui_fixes_test.py` — asserzione di **regressione**: verifica che
+  `closeEvent`/`hideEvent` **non** contengano `stop_thread` (per non
+  reintrodurre il bug che scartava il download).
+
+---
+
+## 11. Confronto strutturale finale (originale Gitea → refactor)
+
+Conteggio file `.py` (escluse cartelle generate):
+
+| Originale (Gitea)            | righe | →  | Refactor (`bal/`)                         | righe |
+|------------------------------|------:|----|-------------------------------------------|------:|
+| `__init__.py`                |     1 | →  | `__init__.py`                             |    37 |
+| `bal.py`                     |   161 | →  | `core/plugin_base.py`                     |   351 |
+| `util.py`                    |  1051 | →  | `core/util.py`                            |   614 |
+| `heirs.py`                   |   792 | →  | `core/heirs.py`                           |   806 |
+| `will.py`                    |   903 | →  | `core/will.py`                            |   938 |
+| `willexecutors.py`           |   547 | →  | `core/willexecutors.py`                   |   390 |
+| `qt.py` (monolite GUI)       |  3777 | →  | suddiviso in `gui/qt/*` (vedi sotto)      |     — |
+| `bal_resources.py`           |    14 | →  | `bal_resources.py`                        |    14 |
+| `wallet_util/*.py`           |   275 | →  | `wallet_util/*.py` (invariati)            |   280 |
+
+Suddivisione del vecchio `qt.py` (3777 righe) nei moduli GUI:
+
+| Modulo refactor             | righe | Contenuto |
+|-----------------------------|------:|-----------|
+| `gui/qt/plugin.py`          |   303 | classe `Plugin` (`@hook` Electrum → GUI) |
+| `gui/qt/window.py`          |  1048 | `BalWindow` (controller per-wallet) |
+| `gui/qt/dialogs.py`         |  1155 | finestre di dialogo + wizard |
+| `gui/qt/lists.py`           |   964 | viste ad albero (eredi/preview/executor) |
+| `gui/qt/widgets.py`         |   782 | widget "foglia" |
+| `gui/qt/common.py`          |   157 | import condivisi + helper |
+| `gui/qt/window_utils.py`    |   119 | helper finestre (NUOVO — vedi §9) |
+| `gui/qt/calendar.py`        |    80 | `BalCalendar` |
+| `gui/qt/theme.py`           |    59 | mappatura stato → colore |
+| `gui/qt/__init__.py`        |    17 | init package GUI |
+
+> Le differenze nei conteggi di righe rispetto all'originale derivano da:
+> riformattazione/commenti, separazione degli import per modulo, e spostamento
+> di funzioni tra `util.py`/`bal.py` e i nuovi moduli. **Gli algoritmi non sono
+> stati modificati.**
+
+---
+
+## 12. Cronologia delle modifiche su GitHub
+
+- **`4198a51`** — import iniziale del refactor strutturale (v0.2.8): separazione
+  `core/` (logica) vs `gui/qt/` (presentazione), packaging conforme, fix
+  caricamento zip esterno, smoke test (sezioni §1-§8).
+- **`d56fa36`** — questo changelog del refactoring (in italiano).
+- **`4806997`** — `DIAGNOSI_GUI.md`: diagnosi dei bug GUI di z-order e ciclo di
+  vita (Fase A).
+- **`dd6f677`** (PR **#2**, squash) — correzioni GUI **B1-B10** + fix download
+  lista will-executor + `window_utils.py` + test di regressione (sezioni §9-§10).
