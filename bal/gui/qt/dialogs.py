@@ -429,8 +429,15 @@ class BalWaitingDialog(BalDialog):
         self.thread.finished.connect(self.deleteLater)  # see #3956
         self.thread.finished.connect(self.finished)
         self.thread.add(self.task, self.on_success, self.accept, self.on_error)
-        # Window-modal + brought to front so the waiting dialog stays visible.
-        show_modal(self)
+        # IMPORTANT: keep the *application-modal* exec() of the original code.
+        # This dialog is driven by a TaskThread whose result (on_success, e.g.
+        # populating the will-executor list) is delivered via a queued signal
+        # while exec() spins the modal event loop.  Switching to window-modal
+        # changed how the modal loop interacts with that delivery and could
+        # cause the downloaded list to never be applied.  We only add the
+        # raise/activate so the dialog stays visible, without altering modality.
+        bring_to_front(self)
+        self.exec()
 
     def hello(self):
         pass
