@@ -68,6 +68,48 @@ Copy the `bal/` directory into your Electrum installation's
 `electrum/plugins/` directory, so that `electrum/plugins/bal/manifest.json`
 exists, then enable it from **Tools → Plugins**.
 
+## Inheritance safety: anticipate / postpone
+
+A will transaction is signed with a **fixed, immutable locktime** and then
+optionally sent to will-executor servers, which are economically incentivised
+to broadcast it (they collect fees). Because the locktime is baked into the
+signed transaction, simply changing the delivery time later is **not enough**:
+the old, already-signed transaction keeps living on the will-executors.
+
+The plugin handles the two cases as follows (triggered when you press
+**Tools → Prepare**):
+
+* **Anticipate** (new delivery time *earlier* than the signed locktime): the
+  will is treated as expired and you are asked to **invalidate** the old
+  transaction on-chain, then rebuild.
+* **Postpone** (new delivery time *later* than the signed locktime) on a will
+  that was already **signed and/or pushed**: the previously committed coins
+  must be invalidated on-chain **first**, otherwise a will-executor could
+  broadcast the old (earlier-locktime) transaction and execute the inheritance
+  *too early*. The plugin detects this by comparing the requested locktime with
+  the locktime **frozen inside the signed transaction** (`tx.locktime`), and
+  asks you to sign and broadcast an invalidation transaction. After it is
+  broadcast, press **Prepare** again to rebuild, re-sign and re-send the new
+  (postponed) inheritance. Postponing a will that was *never* signed/sent just
+  rebuilds it (no on-chain fee).
+
+## Transaction list: the "Server" column
+
+The will transaction list shows a dedicated **Server** column so you always
+know whether each inheritance transaction is actually stored on the
+will-executor servers, independently of the row colour:
+
+| Label | Meaning |
+| --- | --- |
+| `Confirmed on server` | the will-executor confirmed it stored the transaction |
+| `Sent (not checked)` | pushed to the will-executor, not yet re-checked |
+| `Send failed` / `Not on server` | push failed or the server no longer has it |
+| `Signed (not sent)` | signed locally, not sent to any will-executor |
+| `Not sent` | not signed/sent yet |
+
+Hovering the cell shows a tooltip with the will-executor URL and the current
+state.
+
 ## Testing
 
 ```bash

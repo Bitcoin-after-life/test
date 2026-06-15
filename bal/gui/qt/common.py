@@ -53,10 +53,10 @@ from PyQt6.QtCore import (QDateTime, QModelIndex, QPersistentModelIndex, Qt,
                           QTimer, pyqtSignal)
 from PyQt6.QtGui import (QColor, QPainter, QPalette, QStandardItem,
                          QStandardItemModel)
-from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
-                             QDateTimeEdit, QGridLayout, QHBoxLayout, QLabel,
-                             QLineEdit, QTextEdit, QMenu, QMenuBar, QPushButton,
-                             QScrollArea, QSizePolicy, QSpinBox,
+from PyQt6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QCheckBox,
+                             QComboBox, QDateTimeEdit, QGridLayout, QHBoxLayout,
+                             QLabel, QLineEdit, QTextEdit, QMenu, QMenuBar,
+                             QPushButton, QScrollArea, QSizePolicy, QSpinBox,
                              QStackedWidget, QStyle, QStyleOptionFrame,
                              QVBoxLayout, QWidget, QDialog)
 
@@ -69,11 +69,11 @@ from ...core.will import (AmountException, HeirChangeException,
                           NotCompleteWillException, NoWillExecutorNotPresent,
                           TxFeesChangedException, Will,
                           WillexecutorChangeException, WillExecutorNotPresent,
-                          WillExpiredException, WillItem)
+                          WillExpiredException, WillItem, WillPostponedException)
 from ...core.willexecutors import Willexecutors
 
 # --- Presentation helpers ---
-from .theme import status_color
+from .theme import server_status_text, server_status_tooltip, status_color
 from .window_utils import (bring_to_front, show_modal, show_on_top,
                            stop_thread, top_level_of)
 
@@ -116,18 +116,34 @@ class CheckAliveError(Exception):
 
 
 def log_error(exec_info, window=None):
-    _logger.error(f"LOG_ERROR: {exec_info}")
-    #tb = traceback.format_exc()
-    try:
-        tb=exec_info[1]
-        _logger.error(tb)
-    except Exception:
-        tb = traceback.format_exc()
-        _logger.error(tb)
+    """Log an error and optionally show it.
 
+    ``exec_info`` may be either a ``sys.exc_info()`` triple
+    ``(type, value, traceback)`` or a single exception instance (callers use
+    both forms), so we handle both and always try to log a full traceback.
+    """
+    _logger.error(f"LOG_ERROR: {exec_info}")
+    exc = None
+    if isinstance(exec_info, BaseException):
+        exc = exec_info
+    elif isinstance(exec_info, (tuple, list)) and len(exec_info) >= 2:
+        # sys.exc_info() form: the exception instance is the 2nd element.
+        exc = exec_info[1]
+    try:
+        if exc is not None:
+            _logger.error(
+                "".join(
+                    traceback.format_exception(type(exc), exc, exc.__traceback__)
+                )
+            )
+        else:
+            _logger.error(traceback.format_exc())
+    except Exception:
+        _logger.error(traceback.format_exc())
 
     if window is not None:
-        window.show_error(exec_info)
+        # show_error expects a human-readable message, not a triple.
+        window.show_error(str(exc) if exc is not None else str(exec_info))
 
 
 

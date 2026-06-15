@@ -381,7 +381,10 @@ class BalWizardLocktimeAndFeeWidget(BalWizardWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        layout.addWidget(WillSettingsWidget(self.bal_window, self, "v"))
+        # The wizard ("Build your will") is the ONLY place the delivery time,
+        # check alive and fee can be edited, so it is the only read_only=False.
+        layout.addWidget(WillSettingsWidget(self.bal_window, self, "v",
+                                            read_only=False))
         spacer_widget = QWidget()
         spacer_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -592,6 +595,20 @@ class BalBuildWillDialog(BalDialog):
             return None, Will.invalidate_will(
                 self.bal_window.willitems, self.bal_window.wallet, fee_per_byte
             )
+        except WillPostponedException as e:
+            # An already signed/sent will is being postponed.  Like an expired
+            # will, the previously committed coins must be invalidated on-chain
+            # FIRST (otherwise a will-executor could broadcast the old,
+            # earlier-locktime tx and execute the inheritance too early).  We
+            # return (None, tx) so phase 2 asks the user to sign and broadcast
+            # the invalidation; afterwards the user presses Prepare again to
+            # rebuild the new (postponed) inheritance.
+            _logger.debug(f"postponed {e}")
+            self.msg_set_checking(_("Postponed: invalidating old will"))
+            fee_per_byte = self.bal_window.will_settings.get("baltx_fees", 1)
+            return None, Will.invalidate_will(
+                self.bal_window.willitems, self.bal_window.wallet, fee_per_byte
+            )
         except NoHeirsException as e:
             _logger.debug("no heirs")
             self.msg_set_checking("No Heirs")
@@ -709,54 +726,120 @@ class BalBuildWillDialog(BalDialog):
             willexecutors = Willexecutors.get_willexecutor_transactions(
                 self.bal_window.willitems
             )
-            for url, willexecutor in willexecutors.items():
+
+            # Only push to the will-executors the user actually selected.  We
+            # filter the mapping up-front so push_transactions_parallel only
+            # talks to the relevant servers.
+            selected = {
+                url: we
+                for url, we in willexecutors.items()
+                if Willexecutors.is_selected(self.bal_window.willexecutors.get(url))
+            }
+
+            # Servers that report "already present" need their stored tx
+            # verified afterwards (network I/O); collect them here and process
+            # them sequentially after the parallel push, keeping the original
+            # check logic untouched.
+            already_present = []
+            retry_flag = {"value": False}
+            total = len(selected)
+            done = {"count": 0}
+
+            deadline = Willexecutors.PUSH_GLOBAL_DEADLINE
+
+            def _status_line():
+                # e.g. "Broadcasting your will to executors: 2/3 (5s / 30s)".
+                # The "/ 30s" makes the maximum wait explicit, so the user knows
+                # the wizard will proceed by then (the global deadline) instead
+                # of wondering how long the counter will keep climbing.
+                return "{} {}/{} ({}s / {}s)".format(
+                    _("Broadcasting"), done["count"], total,
+                    min(int(time.time() - push_start), deadline), deadline,
+                )
+
+            def on_each(url, willexecutor, ok, exc):
+                # Runs from a worker thread.  Do only thread-safe book-keeping
+                # plus a signal-based UI update (msg_edit_row emits a pyqtSignal,
+                # which is marshalled to the GUI thread).
+                if isinstance(exc, Willexecutors.AlreadyPresentException):
+                    already_present.append(url)
+                elif ok:
+                    for wid in willexecutor["txsids"]:
+                        self.bal_window.willitems[wid].set_status("PUSHED", True)
+                else:
+                    for wid in willexecutor["txsids"]:
+                        self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
+                    retry_flag["value"] = True
+                done["count"] += 1
+                self.msg_edit_row("{} : {}".format(url, "Ok" if ok else "Ko"))
+                self.msg_set_pushing(_status_line())
+
+            def on_timeout(url, willexecutor):
+                # The global deadline elapsed before this server answered.  Mark
+                # its txs as failed (so the user can retry later) and show it.
+                for wid in willexecutor.get("txsids", []):
+                    self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
+                retry_flag["value"] = True
+                self.msg_edit_row(
+                    "{} : {}".format(url, self.msg_error(_("Timeout - no answer")))
+                )
+
+            if self._stopping:
+                return
+            # Push to all selected will-executors in parallel: a slow/dead
+            # server no longer blocks the others, so the wizard's "Broadcasting"
+            # step is no longer sequential.  Each server keeps a short retry
+            # behaviour, and a global deadline guarantees the wizard always
+            # proceeds even if a server never answers.
+            push_start = time.time()
+            self.msg_set_pushing(_status_line())
+
+            # Refresh the elapsed-seconds counter while the (blocking) parallel
+            # push runs, so the user sees time advancing instead of a frozen
+            # "Trasmissione".  The tick is driven from THIS (Task) thread by
+            # push_transactions_parallel, the same thread that drives on_each, so
+            # the pyqtSignal repaint is reliable (a separate heartbeat thread's
+            # signal emissions were not being marshalled and never repainted).
+            def on_tick():
                 if self._stopping:
                     return
-                try:
-                    if Willexecutors.is_selected(
-                        self.bal_window.willexecutors.get(url)
-                    ):
-                        _logger.debug(f"{url}: {willexecutor}")
-                        if not Willexecutors.push_transactions_to_willexecutor(
-                            willexecutor
-                        ):
-                            for wid in willexecutor["txsids"]:
-                                self.bal_window.willitems[wid].set_status(
-                                    "PUSH_FAIL", True
-                                )
-                            retry = True
-                        else:
-                            for wid in willexecutor["txsids"]:
-                                self.bal_window.willitems[wid].set_status(
-                                    "PUSHED", True
-                                )
-                except Willexecutors.AlreadyPresentException:
-                    for wid in willexecutor["txsids"]:
-                        if self._stopping:
-                            return
-                        row = self.msg_edit_row(
-                            "checking {} - {} : {}".format(
-                                self.bal_window.willitems[wid].we["url"], wid, "Waiting"
-                            )
-                        )
-                        self.bal_plugin = self.bal_window.bal_plugin
-                        w = self.bal_window.willitems[wid]
+                self.msg_set_pushing(_status_line())
 
-                        w.set_check_willexecutor(
-                            Willexecutors.check_transaction(wid, w.we["url"])
-                        )
-                        row = self.msg_edit_row(
-                            "checked {} - {} : {}".format(
-                                self.bal_window.willitems[wid].we["url"],
-                                wid,
-                                self.bal_window.willitems[wid].get_status("CHECKED"),
-                            ),
-                            row,
-                        )
+            Willexecutors.push_transactions_parallel(
+                selected, on_each=on_each, on_timeout=on_timeout, on_tick=on_tick
+            )
 
-                except Exception as e:
-                    _logger.error(f"loop push error:{e}")
-                    raise e
+            # Final summary line with the total elapsed time.
+            self.msg_set_pushing(
+                "{}/{} ({}s)".format(done["count"], total,
+                                     int(time.time() - push_start))
+            )
+            retry = retry_flag["value"]
+
+            # Verify the "already present" servers (sequential, original logic).
+            self.bal_plugin = self.bal_window.bal_plugin
+            for url in already_present:
+                for wid in willexecutors[url]["txsids"]:
+                    if self._stopping:
+                        return
+                    row = self.msg_edit_row(
+                        "checking {} - {} : {}".format(
+                            self.bal_window.willitems[wid].we["url"], wid, "Waiting"
+                        )
+                    )
+                    w = self.bal_window.willitems[wid]
+                    w.set_check_willexecutor(
+                        Willexecutors.check_transaction(wid, w.we["url"])
+                    )
+                    row = self.msg_edit_row(
+                        "checked {} - {} : {}".format(
+                            self.bal_window.willitems[wid].we["url"],
+                            wid,
+                            self.bal_window.willitems[wid].get_status("CHECKED"),
+                        ),
+                        row,
+                    )
+
             if retry:
                 raise Exception("retry")
 
