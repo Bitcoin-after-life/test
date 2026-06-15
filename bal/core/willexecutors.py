@@ -145,8 +145,21 @@ class Willexecutors:
 
     @staticmethod
     def send_request(
-        method, url, data=None, *, timeout=10, handle_response=None, count_reply=0
+        method, url, data=None, *, timeout=10, handle_response=None, count_reply=0,
+        max_retries=10, retry_sleep=3,
     ):
+        """Send an HTTP request to a will-executor server.
+
+        ``max_retries`` / ``retry_sleep`` control the timeout-retry behaviour:
+
+        * For *critical* operations (pushing inheritance transactions) the
+          historical default of up to 10 retries with a 3s back-off is kept, so
+          a transient network hiccup does not lose a transaction.
+        * For *interactive* operations (ping / info / list download) callers
+          should pass ``max_retries=0`` so a dead server fails fast (one short
+          timeout) instead of blocking the UI for minutes.  See
+          :meth:`ping_servers_parallel`.
+        """
         network = Network.get_instance()
         if not network:
             raise Exception("You are offline.")
@@ -178,9 +191,12 @@ class Willexecutors:
             else:
                 raise Exception(f"unexpected {method=!r}")
         except TimeoutError:
-            if count_reply < 10:
-                _logger.debug(f"timeout({count_reply}) error: retry in 3 sec...")
-                time.sleep(3)
+            if count_reply < max_retries:
+                _logger.debug(
+                    f"timeout({count_reply}) error: retry in {retry_sleep} sec..."
+                )
+                if retry_sleep:
+                    time.sleep(retry_sleep)
                 return Willexecutors.send_request(
                     method,
                     url,
@@ -188,6 +204,8 @@ class Willexecutors:
                     timeout=timeout,
                     handle_response=handle_response,
                     count_reply=count_reply + 1,
+                    max_retries=max_retries,
+                    retry_sleep=retry_sleep,
                 )
             else:
                 _logger.debug(f"Too many timeouts: {count_reply}")
@@ -254,18 +272,28 @@ class Willexecutors:
             Willexecutors.get_info_task(url, we)
 
     @staticmethod
-    def get_info_task(url, willexecutor):
+    def get_info_task(url, willexecutor, *, timeout=DEFAULT_TIMEOUT,
+                      max_retries=0, retry_sleep=0):
         w = None
         try:
             _logger.info("GETINFO_WILLEXECUTOR")
             _logger.debug(url)
-            w = Willexecutors.send_request("get", url + "/" + chainname + "/info")
+            # Fast-fail by default (max_retries=0): a dead server returns after a
+            # single short timeout instead of retrying 10x with sleeps, which
+            # used to freeze the UI for minutes per unreachable server.
+            w = Willexecutors.send_request(
+                "get", url + "/" + chainname + "/info",
+                timeout=timeout, max_retries=max_retries, retry_sleep=retry_sleep,
+            )
             if isinstance(w, dict):
                 willexecutor["url"] = url
                 willexecutor["status"] = 200
                 willexecutor["base_fee"] = w["base_fee"]
                 willexecutor["address"] = w["address"]
                 willexecutor["info"] = w["info"]
+            else:
+                # No dict reply (timeout / empty) -> mark as unreachable.
+                willexecutor["status"] = "KO"
             _logger.debug(f"response_data {w}")
         except Exception as e:
             _logger.error(f"error {e} contacting {url}: {w}")
@@ -273,6 +301,109 @@ class Willexecutors:
 
         willexecutor["last_update"] = datetime.now().timestamp()
         return willexecutor
+
+    @staticmethod
+    def ping_servers_parallel(willexecutors, *, on_each=None, max_workers=8,
+                              timeout=DEFAULT_TIMEOUT):
+        """Ping every will-executor concurrently and report results as they
+        arrive.
+
+        Network requests run in a thread pool: each ``send_http_on_proxy`` call
+        schedules its coroutine on Electrum's shared asyncio loop and blocks
+        only its *own* worker thread, so the total wall-clock time is roughly
+        that of the slowest server rather than the *sum* of all of them.  A
+        single dead server can no longer stall the whole batch.
+
+        Args:
+            willexecutors: ``{url: we_dict}`` mapping (mutated in place with the
+                ping result, exactly like the old sequential ``ping_servers``).
+            on_each: optional ``callback(url, we_dict, ok: bool)`` invoked from a
+                worker thread each time a server answers (or fails), so the GUI
+                can update its list live.  Must be thread-safe / marshalled to
+                the GUI thread by the caller.
+            max_workers: maximum number of concurrent pings.
+            timeout: per-request timeout in seconds (fast-fail, no retries).
+
+        Returns:
+            The same ``willexecutors`` mapping, updated in place.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        items = list(willexecutors.items())
+        if not items:
+            return willexecutors
+
+        def _ping_one(url, we):
+            we = Willexecutors.get_info_task(
+                url, we, timeout=timeout, max_retries=0, retry_sleep=0
+            )
+            ok = we.get("status") == 200
+            return url, we, ok
+
+        workers = max(1, min(max_workers, len(items)))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="bal-ping") as pool:
+            futures = [pool.submit(_ping_one, url, we) for url, we in items]
+            for fut in as_completed(futures):
+                try:
+                    url, we, ok = fut.result()
+                except Exception as e:  # defensive: never let one server crash all
+                    _logger.error(f"ping_servers_parallel worker error: {e}")
+                    continue
+                willexecutors[url] = we
+                if on_each is not None:
+                    try:
+                        on_each(url, we, ok)
+                    except Exception as cb_err:
+                        _logger.error(f"ping on_each callback error: {cb_err}")
+        return willexecutors
+
+    @staticmethod
+    def push_transactions_parallel(willexecutors, *, on_each=None, max_workers=8):
+        """Push transactions to multiple will-executors concurrently.
+
+        Like :meth:`ping_servers_parallel` but for the ``pushtxs`` operation.
+        Each server keeps the historical retry behaviour of
+        :meth:`push_transactions_to_willexecutor` (which is important so a real
+        transaction is not lost to a transient hiccup), but the servers are now
+        contacted in parallel instead of one-after-another, and results are
+        reported via ``on_each(url, we_dict, ok, exc)`` as they complete.
+
+        Returns ``{url: (ok, exception_or_None)}``.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        targets = [(url, we) for url, we in willexecutors.items() if "txs" in we]
+        results = {}
+        if not targets:
+            return results
+
+        def _push_one(url, we):
+            try:
+                ok = Willexecutors.push_transactions_to_willexecutor(we)
+                return url, we, ok, None
+            except Willexecutors.AlreadyPresentException as ape:
+                return url, we, False, ape
+            except Exception as e:
+                return url, we, False, e
+
+        workers = max(1, min(max_workers, len(targets)))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="bal-push") as pool:
+            futures = [pool.submit(_push_one, url, we) for url, we in targets]
+            for fut in as_completed(futures):
+                try:
+                    url, we, ok, exc = fut.result()
+                except Exception as e:
+                    _logger.error(f"push_transactions_parallel worker error: {e}")
+                    continue
+                results[url] = (ok, exc)
+                if on_each is not None:
+                    try:
+                        on_each(url, we, ok, exc)
+                    except Exception as cb_err:
+                        _logger.error(f"push on_each callback error: {cb_err}")
+        return results
 
     @staticmethod
     def initialize_willexecutor(willexecutor, url, status=None, old_willexecutor=None):

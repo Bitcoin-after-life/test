@@ -797,48 +797,72 @@ class BalWindow:
                 msg += f"{url}:\t{willexecutors[url]['broadcast_status']}\n"
             return msg
 
-        error = False
+        # Initialise statuses + show the list immediately.
         for url in willexecutors:
-            if self.waiting_dialog._stopping:
-                return
-            willexecutor = willexecutors[url]
+            willexecutors[url].setdefault("broadcast_status", _("waiting..."))
+        try:
             self.waiting_dialog.update(getMsg(willexecutors))
-            if "txs" in willexecutor:
-                try:
-                    if Willexecutors.push_transactions_to_willexecutor(
-                        willexecutors[url]
-                    ):
-                        for wid in willexecutors[url]["txsids"]:
-                            self.willitems[wid].set_status("PUSHED", True)
-                        willexecutors[url]["broadcast_status"] = _("Success")
-                    else:
-                        for wid in willexecutors[url]["txsids"]:
-                            self.willitems[wid].set_status("PUSH_FAIL", True)
-                            error = True
-                        willexecutors[url]["broadcast_status"] = _("Failed")
-                    del willexecutor["txs"]
-                except Willexecutors.AlreadyPresentException:
-                    for wid in willexecutor["txsids"]:
-                        if self.waiting_dialog._stopping:
-                            return
-                        self.waiting_dialog.update(
-                            "checking {} - {} : {}".format(
-                                self.willitems[wid].we["url"], wid, "Waiting"
-                            )
-                        )
-                        w = self.willitems[wid]
-                        w.set_check_willexecutor(
-                            Willexecutors.check_transaction(wid, w.we["url"])
-                        )
-                        self.waiting_dialog.update(
-                            "checked {} - {} : {}".format(
-                                self.willitems[wid].we["url"],
-                                wid,
-                                self.willitems[wid].get_status("CHECKED"),
-                            )
-                        )
+        except Exception:
+            pass
 
-        if error:
+        error = {"flag": False}
+        already_present = []
+
+        def on_each(url, willexecutor, ok, exc):
+            # Runs from a worker thread.  We only do book-keeping + a thread-safe
+            # signal-based UI update here; the heavier "already present" check
+            # path (which itself does network I/O) is handled below in the main
+            # task thread to keep the original sequential behaviour for it.
+            if isinstance(exc, Willexecutors.AlreadyPresentException):
+                already_present.append(url)
+                willexecutor["broadcast_status"] = _("checking...")
+            elif ok:
+                for wid in willexecutor.get("txsids", []):
+                    self.willitems[wid].set_status("PUSHED", True)
+                willexecutor["broadcast_status"] = _("Success")
+            else:
+                for wid in willexecutor.get("txsids", []):
+                    self.willitems[wid].set_status("PUSH_FAIL", True)
+                error["flag"] = True
+                willexecutor["broadcast_status"] = _("Failed")
+            willexecutor.pop("txs", None)
+            try:
+                self.waiting_dialog.update(getMsg(willexecutors))
+            except Exception:
+                pass
+
+        if self.waiting_dialog._stopping:
+            return
+        # Push to all servers in parallel (each server keeps its own retry
+        # behaviour, but a slow/dead server no longer blocks the others).
+        Willexecutors.push_transactions_parallel(willexecutors, on_each=on_each)
+
+        # Handle the "already present" servers: verify each stored tx.  This
+        # keeps the exact original check logic, just executed after the parallel
+        # push has identified which servers need it.
+        for url in already_present:
+            willexecutor = willexecutors[url]
+            for wid in willexecutor.get("txsids", []):
+                if self.waiting_dialog._stopping:
+                    return
+                self.waiting_dialog.update(
+                    "checking {} - {} : {}".format(
+                        self.willitems[wid].we["url"], wid, "Waiting"
+                    )
+                )
+                w = self.willitems[wid]
+                w.set_check_willexecutor(
+                    Willexecutors.check_transaction(wid, w.we["url"])
+                )
+                self.waiting_dialog.update(
+                    "checked {} - {} : {}".format(
+                        self.willitems[wid].we["url"],
+                        wid,
+                        self.willitems[wid].get_status("CHECKED"),
+                    )
+                )
+
+        if error["flag"]:
             return True
 
     def export_json_file(self, path):
@@ -941,7 +965,13 @@ class BalWindow:
         for url in candidates:
             _logger.info(f"fetch_will_executors_list: trying {url}")
             try:
-                resp = Willexecutors.send_request("get", url, timeout=20)
+                # Fast-fail with a couple of short retries instead of the
+                # default 10x/3s storm: if the user's connection is flaky we
+                # want to fall back to the next URL (and then show the simple
+                # error message) quickly, not freeze for minutes.
+                resp = Willexecutors.send_request(
+                    "get", url, timeout=10, max_retries=1, retry_sleep=1,
+                )
                 _logger.info(
                     f"fetch_will_executors_list: resp type={type(resp).__name__} "
                     f"len={len(resp) if hasattr(resp, '__len__') else 'n/a'}"
@@ -997,8 +1027,13 @@ class BalWindow:
 
     def ping_willexecutors_task(self, wes):
         _logger.info("ping willexecutots task")
-        pinged = []
-        failed = []
+        # Track per-url state for the live status text.  Servers are contacted
+        # in parallel (see Willexecutors.ping_servers_parallel), so a single
+        # unreachable server no longer blocks all the others: the whole batch
+        # now takes about as long as the slowest server instead of the sum of
+        # every server's (possibly timing-out) request.
+        pinged = set()
+        failed = set()
 
         def get_title():
             msg = _("Ping Will-Executors:")
@@ -1006,26 +1041,32 @@ class BalWindow:
             for url in wes:
                 urlstr = "{:<50}: ".format(url[:50])
                 if url in pinged:
-                    urlstr += "Ok"
+                    urlstr += _("Ok")
                 elif url in failed:
-                    urlstr += "Ko"
+                    urlstr += _("Ko")
                 else:
-                    urlstr += "--"
+                    urlstr += _("waiting...")
                 urlstr += "\n"
                 msg += urlstr
-
             return msg
 
-        for url, we in wes.items():
+        def on_each(url, we, ok):
+            if ok:
+                pinged.add(url)
+            else:
+                failed.add(url)
             try:
                 self.waiting_dialog.update(get_title())
             except Exception:
                 pass
-            wes[url] = Willexecutors.get_info_task(url, we)
-            if wes[url]["status"] == "KO":
-                failed.append(url)
-            else:
-                pinged.append(url)
+
+        # Show the initial "waiting..." list immediately.
+        try:
+            self.waiting_dialog.update(get_title())
+        except Exception:
+            pass
+
+        Willexecutors.ping_servers_parallel(wes, on_each=on_each)
 
     def ping_willexecutors(self, wes, fn_on_success, fn_on_failure=None):
         def on_success(result):

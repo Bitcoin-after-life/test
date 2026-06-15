@@ -321,7 +321,7 @@ class Util:
         value_amount = 0
 
         for outa in outputsa:
-            same_amount, same_address = Util.in_output(outa, txb.outputs())
+            same_amount, same_address = Util.din_output(outa, txb.outputs())
             if not (same_amount or same_address):
                 return False
             if same_amount and same_address:
