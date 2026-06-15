@@ -529,6 +529,29 @@ class BalWindow:
                 return
             except NoHeirsException:
                 return
+            except WillPostponedException as e:
+                # The will was already signed/sent and is being postponed.
+                # We do NOT rebuild automatically: the user must first sign and
+                # broadcast the invalidation tx (so the old, earlier-locktime tx
+                # can never be used by a will-executor), then press "Prepare"
+                # again
+                # to create the new postponed inheritance.
+                _logger.info(f"will postponed: {e}")
+                self.show_message(
+                    _(
+                        "This inheritance was already signed/sent to "
+                        "will-executors and you are postponing it.\n\n"
+                        "The previously committed coins must be invalidated "
+                        "on-chain FIRST, otherwise a will-executor could "
+                        "broadcast the old (earlier) transaction and execute "
+                        "the inheritance too early.\n\n"
+                        "Please sign and broadcast the invalidation transaction "
+                        "now, then press 'Prepare' again to create the new "
+                        "(postponed) inheritance."
+                    )
+                )
+                self.invalidate_will()
+                return
             except NotCompleteWillException as e:
                 _logger.info("{}:{}".format(type(e), e))
                 message = False

@@ -69,11 +69,11 @@ from ...core.will import (AmountException, HeirChangeException,
                           NotCompleteWillException, NoWillExecutorNotPresent,
                           TxFeesChangedException, Will,
                           WillexecutorChangeException, WillExecutorNotPresent,
-                          WillExpiredException, WillItem)
+                          WillExpiredException, WillItem, WillPostponedException)
 from ...core.willexecutors import Willexecutors
 
 # --- Presentation helpers ---
-from .theme import status_color
+from .theme import server_status_text, server_status_tooltip, status_color
 from .window_utils import (bring_to_front, show_modal, show_on_top,
                            stop_thread, top_level_of)
 

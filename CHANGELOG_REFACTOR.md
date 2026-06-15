@@ -455,3 +455,64 @@ producono **lo stesso identico risultato** di prima.
   Verificato anche che il test **fallisce** senza il fix.
 
 Confermato dall'utente: **"si ora funziona"**.
+
+## 14. NUOVA FUNZIONE: invalidazione automatica al posticipo dell'eredità
+
+### Problema
+Una transazione di eredità viene firmata con un **locktime fisso e immutabile**
+e inviata ai will-executor, che sono economicamente incentivati a trasmetterla
+(incassano le fee). Se l'utente, dopo aver firmato/inviato, **posticipa** la
+data di consegna (es. di un anno), la **vecchia** transazione gia firmata resta
+valida sui server dei will-executor. Poiche ha il locktime piu basso, un
+will-executor potrebbe trasmetterla appena scade, eseguendo l'eredita **in
+anticipo** rispetto alla nuova volonta dell'utente. La versione precedente
+**non gestiva** questo caso: il posticipo non produceva alcuna azione.
+
+### Soluzione (Strategia B — invalidazione esplicita on-chain)
+Al posticipo di un'eredita **gia firmata e/o inviata** (stato `COMPLETE` o
+`PUSHED`), il plugin chiede di **invalidare on-chain** i fondi prima di
+ricostruire la nuova eredita. L'invalidazione spende gli stessi UTXO verso un
+nuovo indirizzo di change con `locktime = altezza corrente` (RBF), quindi e
+trasmettibile subito: una volta confermata, la vecchia transazione pre-firmata
+diventa **definitivamente inutilizzabile**, vincendo la corsa contro qualunque
+will-executor.
+
+### Dettagli tecnici
+- **`core/will.py`**:
+  - nuova eccezione `WillPostponedException` (sottoclasse di
+    `NotCompleteWillException`);
+  - `check_willexecutors_and_heirs`: il confronto del locktime non usa piu
+    l'entry dell'erede memorizzata (`their[2]`), che viene aggiornata in memoria
+    insieme al nuovo valore al momento del posticipo e quindi risulterebbe
+    sempre uguale. Ora confronta il locktime richiesto con **`w.tx.locktime`**,
+    cioe il locktime **congelato** nella transazione firmata (immutabile, e
+    quello che i will-executor possiedono). Tre casi: invariato → coerente;
+    nuovo > tx su will firmato/inviato → `WillPostponedException`; nuovo > tx su
+    will mai inviato → semplice ricostruzione (nessuna fee on-chain).
+- **`gui/qt/dialogs.py`** (`BalBuildWillDialog.task_phase1`, il percorso reale
+  usato da **Tools → Prepare**): aggiunto il ramo `except WillPostponedException`
+  **prima** di `NotCompleteWillException`; si comporta come il caso "will
+  scaduto" e ritorna `(None, tx)` per innescare firma + broadcast
+  dell'invalidazione. L'utente preme di nuovo **Prepare** per ricostruire,
+  rifirmare e reinviare la nuova eredita (due passi espliciti, per maggior
+  controllo).
+- **`gui/qt/window.py`** (`build_inheritance_transaction`): aggiunto lo stesso
+  ramo per completezza del percorso alternativo, con messaggio esplicativo.
+- **`gui/qt/common.py`**: `WillPostponedException` esportato.
+
+### NUOVA COLONNA "Server" nella lista transazioni
+Per dare all'utente visibilita costante sullo stato online delle proprie
+transazioni di eredita, e stata aggiunta una colonna dedicata **"Server"** in
+`PreviewList` (`gui/qt/lists.py`), con etichetta sempre leggibile
+(`Confirmed on server`, `Sent (not checked)`, `Send failed`, `Not on server`,
+`Signed (not sent)`, `Not sent`) e **tooltip** con URL del will-executor e
+stato. Le funzioni `server_status_text()` e `server_status_tooltip()` sono in
+`gui/qt/theme.py` e riusano gli stessi flag di stato gia esistenti.
+
+### Test
+- I 182 test ufficiali continuano a passare; smoke test ed external-zip test
+  OK; `ruff` senza nuove segnalazioni reali.
+- Verificato sui dati reali del log dell'utente: il posticipo di un'eredita
+  firmata ora rileva correttamente la condizione e avvia l'invalidazione.
+
+Confermato dall'utente: **"mi pare che funziona"**.

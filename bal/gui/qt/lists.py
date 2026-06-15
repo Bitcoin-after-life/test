@@ -228,12 +228,14 @@ class PreviewList(MyTreeView, MessageBoxMixin):
         TXID = enum.auto()
         WILLEXECUTOR = enum.auto()
         STATUS = enum.auto()
+        SERVER = enum.auto()
 
     headers = {
         Columns.LOCKTIME: _("Locktime"),
         Columns.TXID: _("Txid"),
         Columns.WILLEXECUTOR: _("Will-Executor"),
         Columns.STATUS: _("Status"),
+        Columns.SERVER: _("Server"),
     }
 
     ROLE_HEIR_KEY = Qt.ItemDataRole.UserRole + 2000
@@ -385,6 +387,9 @@ class PreviewList(MyTreeView, MessageBoxMixin):
         if len(bal_tx.status) > 53:
             status = "...{}".format(status[-50:])
         labels[self.Columns.STATUS] = status
+        # Dedicated, always-readable label describing whether the inheritance
+        # transaction is actually stored on the will-executor servers.
+        labels[self.Columns.SERVER] = server_status_text(bal_tx)
 
         items = []
         for e in labels:
@@ -397,6 +402,13 @@ class PreviewList(MyTreeView, MessageBoxMixin):
                 items.append(QStandardItem(str(e)))
 
             items[-1].setBackground(QColor(status_color(bal_tx)))
+
+        # Tooltip on the Server column: shows the will-executor URL (if any)
+        # plus the current server state, so the user can always inspect details.
+        try:
+            items[self.Columns.SERVER].setToolTip(server_status_tooltip(bal_tx))
+        except Exception as tip_err:
+            _logger.debug(f"server tooltip error: {tip_err}")
 
         row_count = self.model().rowCount()
         self.model().insertRow(row_count, items)

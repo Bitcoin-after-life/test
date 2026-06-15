@@ -595,6 +595,20 @@ class BalBuildWillDialog(BalDialog):
             return None, Will.invalidate_will(
                 self.bal_window.willitems, self.bal_window.wallet, fee_per_byte
             )
+        except WillPostponedException as e:
+            # An already signed/sent will is being postponed.  Like an expired
+            # will, the previously committed coins must be invalidated on-chain
+            # FIRST (otherwise a will-executor could broadcast the old,
+            # earlier-locktime tx and execute the inheritance too early).  We
+            # return (None, tx) so phase 2 asks the user to sign and broadcast
+            # the invalidation; afterwards the user presses Prepare again to
+            # rebuild the new (postponed) inheritance.
+            _logger.debug(f"postponed {e}")
+            self.msg_set_checking(_("Postponed: invalidating old will"))
+            fee_per_byte = self.bal_window.will_settings.get("baltx_fees", 1)
+            return None, Will.invalidate_will(
+                self.bal_window.willitems, self.bal_window.wallet, fee_per_byte
+            )
         except NoHeirsException as e:
             _logger.debug("no heirs")
             self.msg_set_checking("No Heirs")

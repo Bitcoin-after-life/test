@@ -671,14 +671,41 @@ class Will:
                     their = will[wid].heirs[wheir]
                     if heir := heirs.get(wheir, None):
 
-                        if (
-                            heir[0] == their[0]
-                            and heir[1] == their[1]
-                            and Util.parse_locktime_string(heir[2])
-                            >= Util.parse_locktime_string(their[2])
-                        ):
-                            count = heirs_found.get(wheir, 0)
-                            heirs_found[wheir] = count + 1
+                        if heir[0] == their[0] and heir[1] == their[1]:
+                            # The requested (possibly new) locktime for this heir.
+                            new_locktime = Util.parse_locktime_string(heir[2])
+                            # IMPORTANT: compare against the locktime that is
+                            # actually frozen inside the already-signed Bitcoin
+                            # transaction (w.tx.locktime), NOT against their[2].
+                            # their[2] is the heir entry stored in the will item,
+                            # which is updated in memory together with the new
+                            # heirs dict when the user postpones, so it would
+                            # always equal new_locktime and the postpone would go
+                            # undetected.  w.tx.locktime is immutable once signed
+                            # and is exactly what the will-executors hold.
+                            tx_locktime = int(w.tx.locktime)
+                            if new_locktime == tx_locktime:
+                                # Unchanged: this heir is still coherent.
+                                count = heirs_found.get(wheir, 0)
+                                heirs_found[wheir] = count + 1
+                            elif new_locktime > tx_locktime and (
+                                w.get_status("COMPLETE") or w.get_status("PUSHED")
+                            ):
+                                # POSTPONE of an already signed/sent will: the
+                                # old pre-signed tx must be invalidated on-chain
+                                # first, otherwise a will-executor could
+                                # broadcast the earlier-locktime tx and execute
+                                # the inheritance too early.
+                                raise WillPostponedException(
+                                    f"{wheir}: locktime postponed "
+                                    f"{tx_locktime}->{new_locktime} "
+                                    f"on a signed/sent will"
+                                )
+                            # new_locktime < tx_locktime (anticipate) is left to
+                            # check_will_expired -> WillExpiredException.
+                            # new_locktime > tx_locktime on a will that was never
+                            # signed/sent falls through here -> a plain rebuild via
+                            # HeirNotFoundException (no on-chain fee needed).
                     else:
                         _logger.debug(
                             f"heir not present transaction is not valid:{wheir} {wid}, {w}"
@@ -909,6 +936,21 @@ class TxFeesChangedException(NotCompleteWillException):
 
 
 class HeirNotFoundException(NotCompleteWillException):
+    pass
+
+
+class WillPostponedException(NotCompleteWillException):
+    """An already signed/sent will is being postponed.
+
+    When a will that has already been signed (``COMPLETE``) and/or pushed to
+    will-executors (``PUSHED``) gets its locktime moved to a LATER date, the
+    previously committed coins must be invalidated on-chain BEFORE rebuilding
+    the new inheritance.  Otherwise a will-executor could broadcast the old
+    (earlier-locktime) transaction and execute the inheritance too early to
+    collect the fees.  Invalidating spends the same UTXOs now, permanently
+    voiding the old pre-signed transaction.
+    """
+
     pass
 
 

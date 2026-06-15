@@ -57,3 +57,41 @@ def status_color(will_item) -> str:
         return "#2bc8ed"  # blue - signed
     else:
         return _DEFAULT_COLOR
+
+
+def server_status_text(will_item) -> str:
+    """Return a short, human-readable label describing the state of a will
+    item on the will-executor servers (the online inheritance backup).
+
+    This is shown in the dedicated "Server" column of the transaction list so
+    the user always knows whether each inheritance transaction is actually
+    stored on the will-executor servers, regardless of the row colour.
+    """
+    from electrum.i18n import _
+
+    if will_item.get_status("CHECK_FAIL") and not will_item.get_status("CHECKED"):
+        return _("Not on server")
+    if will_item.get_status("CHECKED"):
+        return _("Confirmed on server")
+    if will_item.get_status("PUSH_FAIL"):
+        return _("Send failed")
+    if will_item.get_status("PUSHED"):
+        return _("Sent (not checked)")
+    if will_item.get_status("COMPLETE"):
+        return _("Signed (not sent)")
+    return _("Not sent")
+
+
+def server_status_tooltip(will_item) -> str:
+    """Return a detailed tooltip for the "Server" column, including the
+    will-executor URL (if any) and the current server state."""
+    from electrum.i18n import _
+
+    url = None
+    we = getattr(will_item, "we", None)
+    if we:
+        url = we.get("url")
+    state = server_status_text(will_item)
+    if url:
+        return "{}: {}\n{}".format(_("Will-Executor"), url, state)
+    return "{}\n{}".format(_("No will-executor"), state)
