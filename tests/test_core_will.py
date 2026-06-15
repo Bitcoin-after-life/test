@@ -228,6 +228,79 @@ def test_will_check_tx_height():
 # Exception classes
 # ------------------------------------------------------------------ #
 
+def test_will_mark_invalidated_by_tx():
+    """A valid will spending the same prevout as the invalidation tx must be
+    marked INVALIDATED (and therefore lose its VALID flag).  This is what
+    prevents the postpone/expire check from firing a *second* invalidation
+    when phase 1 is restarted after a successful on-chain invalidation."""
+    class FakePrevout:
+        def __init__(self, s):
+            self._s = s
+        def to_str(self):
+            return self._s
+
+    class FakeInput:
+        def __init__(self, s):
+            self.prevout = FakePrevout(s)
+
+    class FakeTx:
+        def __init__(self, prevouts):
+            self._inputs = [FakeInput(p) for p in prevouts]
+        def inputs(self):
+            return self._inputs
+
+    # The real test will item spends this prevout (from _VALID_TX_HEX).
+    spent = "3140eb24b43386f35ba69e3875eb6c93130ac66201d01c58f598defc949a5c2a:0"
+
+    # Will item that spends the same UTXO -> must be invalidated.
+    item_match = _make_willitem_blank()
+    item_match.set_status("COMPLETE", True)
+    # Will item that spends an unrelated UTXO -> must stay VALID.
+    item_other = _make_willitem_blank()
+    item_other.tx = FakeTx(["deadbeef:1"])
+    item_other.children = {}
+
+    will = {"match": item_match, "other": item_other}
+    inval_tx = FakeTx([spent])
+
+    invalidated = Will.mark_invalidated_by_tx(will, inval_tx)
+
+    assert "match" in invalidated
+    assert "other" not in invalidated
+    assert will["match"].get_status("INVALIDATED") is True
+    assert will["match"].get_status("VALID") is False
+    assert will["other"].get_status("VALID") is True
+
+
+def test_will_mark_invalidated_by_tx_no_match():
+    """If no valid will spends any of the invalidation tx's prevouts, nothing
+    is marked."""
+    class FakePrevout:
+        def __init__(self, s):
+            self._s = s
+        def to_str(self):
+            return self._s
+
+    class FakeInput:
+        def __init__(self, s):
+            self.prevout = FakePrevout(s)
+
+    class FakeTx:
+        def __init__(self, prevouts):
+            self._inputs = [FakeInput(p) for p in prevouts]
+        def inputs(self):
+            return self._inputs
+
+    item = _make_willitem_blank()
+    will = {"a": item}
+    inval_tx = FakeTx(["unrelated:9"])
+
+    invalidated = Will.mark_invalidated_by_tx(will, inval_tx)
+
+    assert invalidated == []
+    assert will["a"].get_status("VALID") is True
+
+
 def test_exceptions():
     from bal.core.will import (
         WillException, WillExpiredException, NotCompleteWillException,
@@ -235,6 +308,7 @@ def test_exceptions():
         WillexecutorChangeException, NoWillExecutorNotPresent,
         WillExecutorNotPresent, NoHeirsException,
         AmountException, PercAmountException, FixedAmountException,
+        WillPostponedException,
     )
 
     assert issubclass(WillExpiredException, WillException)
@@ -248,6 +322,9 @@ def test_exceptions():
     assert issubclass(NoHeirsException, WillException)
     assert issubclass(PercAmountException, AmountException)
     assert issubclass(FixedAmountException, AmountException)
+    # WillPostponedException is a NotCompleteWillException but MUST be caught
+    # before it in task_phase1, so it triggers an on-chain invalidation.
+    assert issubclass(WillPostponedException, NotCompleteWillException)
 
     # WillException default message
     exc = WillException()

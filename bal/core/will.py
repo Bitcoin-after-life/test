@@ -421,6 +421,31 @@ class Will:
             pass
 
     @staticmethod
+    def mark_invalidated_by_tx(will, tx):
+        """Mark as INVALIDATED every valid will item that spends at least one
+        of the prevouts consumed by ``tx`` (the on-chain invalidation tx that
+        was just broadcast).
+
+        Once the invalidation tx is broadcast, the previously signed/sent will
+        transactions that relied on those same UTXOs can no longer be mined, so
+        their will items must stop being VALID.  Setting INVALIDATED clears the
+        VALID flag (see WillItem.set_status), which removes them from
+        only_valid_list and therefore prevents the postpone/expire check from
+        firing a *second* invalidation on the next pass.
+
+        Returns the list of will ids that were marked.
+        """
+        spent_prevouts = {i.prevout.to_str() for i in tx.inputs()}
+        invalidated = []
+        for wid in Will.only_valid_list(will):
+            w = will[wid]
+            wi_prevouts = {i.prevout.to_str() for i in w.tx.inputs()}
+            if spent_prevouts & wi_prevouts:
+                Will.set_invalidate(wid, will)
+                invalidated.append(wid)
+        return invalidated
+
+    @staticmethod
     def is_new(will):
         for wid, w in will.items():
             if w.get_status("VALID") and not w.get_status("COMPLETE"):
