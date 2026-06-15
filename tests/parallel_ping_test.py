@@ -122,6 +122,25 @@ def main():
     finally:
         W.push_transactions_to_willexecutor = orig_push
 
+    # ---- 3) the wizard's loop_push must use the parallel helper ----
+    # The "Building Will" wizard broadcasts via BalBuildWillDialog.loop_push.
+    # It previously looped over servers sequentially (one
+    # push_transactions_to_willexecutor call at a time), which is exactly the
+    # slow path the user saw at "Broadcasting your will to executors".  Make
+    # sure it now delegates to push_transactions_parallel.
+    import inspect
+    dialogs_mod = importlib.import_module(f"{PKG}.gui.qt.dialogs")
+    loop_push_src = inspect.getsource(dialogs_mod.BalBuildWillDialog.loop_push)
+    code = "\n".join(
+        line for line in loop_push_src.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    assert "push_transactions_parallel" in code, (
+        "wizard loop_push must use push_transactions_parallel (parallel push)")
+    assert "for url, willexecutor in willexecutors.items()" not in code, (
+        "wizard loop_push must not push to servers in a sequential loop")
+    print("[OK] wizard loop_push uses push_transactions_parallel (not sequential)")
+
     print(f"\n[OK] parallel networking test passed for package {PKG!r}")
     return 0
 

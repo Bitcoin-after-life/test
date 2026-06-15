@@ -709,54 +709,74 @@ class BalBuildWillDialog(BalDialog):
             willexecutors = Willexecutors.get_willexecutor_transactions(
                 self.bal_window.willitems
             )
-            for url, willexecutor in willexecutors.items():
-                if self._stopping:
-                    return
-                try:
-                    if Willexecutors.is_selected(
-                        self.bal_window.willexecutors.get(url)
-                    ):
-                        _logger.debug(f"{url}: {willexecutor}")
-                        if not Willexecutors.push_transactions_to_willexecutor(
-                            willexecutor
-                        ):
-                            for wid in willexecutor["txsids"]:
-                                self.bal_window.willitems[wid].set_status(
-                                    "PUSH_FAIL", True
-                                )
-                            retry = True
-                        else:
-                            for wid in willexecutor["txsids"]:
-                                self.bal_window.willitems[wid].set_status(
-                                    "PUSHED", True
-                                )
-                except Willexecutors.AlreadyPresentException:
+
+            # Only push to the will-executors the user actually selected.  We
+            # filter the mapping up-front so push_transactions_parallel only
+            # talks to the relevant servers.
+            selected = {
+                url: we
+                for url, we in willexecutors.items()
+                if Willexecutors.is_selected(self.bal_window.willexecutors.get(url))
+            }
+
+            # Servers that report "already present" need their stored tx
+            # verified afterwards (network I/O); collect them here and process
+            # them sequentially after the parallel push, keeping the original
+            # check logic untouched.
+            already_present = []
+            retry_flag = {"value": False}
+
+            def on_each(url, willexecutor, ok, exc):
+                # Runs from a worker thread.  Do only thread-safe book-keeping
+                # plus a signal-based UI update (msg_edit_row emits a pyqtSignal,
+                # which is marshalled to the GUI thread).
+                if isinstance(exc, Willexecutors.AlreadyPresentException):
+                    already_present.append(url)
+                elif ok:
                     for wid in willexecutor["txsids"]:
-                        if self._stopping:
-                            return
-                        row = self.msg_edit_row(
-                            "checking {} - {} : {}".format(
-                                self.bal_window.willitems[wid].we["url"], wid, "Waiting"
-                            )
-                        )
-                        self.bal_plugin = self.bal_window.bal_plugin
-                        w = self.bal_window.willitems[wid]
+                        self.bal_window.willitems[wid].set_status("PUSHED", True)
+                else:
+                    for wid in willexecutor["txsids"]:
+                        self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
+                    retry_flag["value"] = True
+                self.msg_edit_row(
+                    "{} : {}".format(url, "Ok" if ok else "Ko")
+                )
 
-                        w.set_check_willexecutor(
-                            Willexecutors.check_transaction(wid, w.we["url"])
-                        )
-                        row = self.msg_edit_row(
-                            "checked {} - {} : {}".format(
-                                self.bal_window.willitems[wid].we["url"],
-                                wid,
-                                self.bal_window.willitems[wid].get_status("CHECKED"),
-                            ),
-                            row,
-                        )
+            if self._stopping:
+                return
+            # Push to all selected will-executors in parallel: a slow/dead
+            # server no longer blocks the others, so the wizard's "Broadcasting"
+            # step is no longer sequential.  Each server still keeps its own
+            # retry behaviour inside push_transactions_to_willexecutor.
+            Willexecutors.push_transactions_parallel(selected, on_each=on_each)
 
-                except Exception as e:
-                    _logger.error(f"loop push error:{e}")
-                    raise e
+            retry = retry_flag["value"]
+
+            # Verify the "already present" servers (sequential, original logic).
+            self.bal_plugin = self.bal_window.bal_plugin
+            for url in already_present:
+                for wid in willexecutors[url]["txsids"]:
+                    if self._stopping:
+                        return
+                    row = self.msg_edit_row(
+                        "checking {} - {} : {}".format(
+                            self.bal_window.willitems[wid].we["url"], wid, "Waiting"
+                        )
+                    )
+                    w = self.bal_window.willitems[wid]
+                    w.set_check_willexecutor(
+                        Willexecutors.check_transaction(wid, w.we["url"])
+                    )
+                    row = self.msg_edit_row(
+                        "checked {} - {} : {}".format(
+                            self.bal_window.willitems[wid].we["url"],
+                            wid,
+                            self.bal_window.willitems[wid].get_status("CHECKED"),
+                        ),
+                        row,
+                    )
+
             if retry:
                 raise Exception("retry")
 
