@@ -708,6 +708,19 @@ class BalBuildWillDialog(BalDialog):
             self.msg_set_invalidating(self.msg_ok())
             if not txid:
                 _logger.debug(f"should not be none txid: {txid}")
+            else:
+                # The invalidation tx is now broadcast, so the old signed/sent
+                # will transactions spending those same UTXOs can no longer be
+                # mined.  Mark them INVALIDATED (which clears their VALID flag)
+                # so the postpone/expire check does NOT fire a second
+                # invalidation when phase 1 is restarted to rebuild the new
+                # (postponed) will.
+                invalidated = Will.mark_invalidated_by_tx(
+                    self.bal_window.willitems, tx
+                )
+                if invalidated:
+                    _logger.debug(f"invalidated will items: {invalidated}")
+                    self.bal_window.save_willitems()
 
         except TxBroadcastError as e:
             _logger.error(f"fail to broadcast transaction:{e}")

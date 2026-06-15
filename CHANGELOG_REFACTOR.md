@@ -516,3 +516,44 @@ stato. Le funzioni `server_status_text()` e `server_status_tooltip()` sono in
   firmata ora rileva correttamente la condizione e avvia l'invalidazione.
 
 Confermato dall'utente: **"mi pare che funziona"**.
+
+## 15. BUGFIX: doppia invalidazione al posticipo dell'eredita (v0.3.1)
+
+### Sintomo segnalato dall'utente
+Posticipando il delivery time, il plugin chiedeva di firmare **due volte** la
+transazione di invalidazione ("Invalidate your old will"), e solo dopo faceva
+firmare la nuova eredita ("Prepare new will").
+
+### Causa
+Il percorso di posticipo era:
+1. `task_phase1` rileva il posticipo -> `WillPostponedException` -> costruisce
+   la tx di invalidazione -> 1ª firma.
+2. Dopo il broadcast, `on_success_invalidate` **riavvia** `task_phase1` per
+   ricostruire la nuova eredita.
+3. **Ma** le will item vecchie erano ancora marcate `COMPLETE`/`PUSHED` con la
+   stessa `tx.locktime` di prima (l'invalidazione on-chain non aggiornava lo
+   stato in memoria), quindi la condizione del posticipo scattava di **nuovo**
+   -> `WillPostponedException` -> **2ª** firma di invalidazione.
+4. Solo al terzo giro la will veniva finalmente ricostruita.
+
+### Correzione
+- **`core/will.py`**: nuovo metodo statico `Will.mark_invalidated_by_tx(will,
+  tx)` che marca come `INVALIDATED` ogni will valida che spende almeno uno dei
+  prevout consumati dalla tx di invalidazione appena trasmessa. Settare
+  `INVALIDATED` azzera automaticamente il flag `VALID` (logica gia esistente in
+  `WillItem.set_status`), cosi quelle will escono da `only_valid_list`.
+- **`gui/qt/dialogs.py`** (`loop_broadcast_invalidating`): dopo il broadcast
+  **riuscito** (quando si ottiene il `txid`), si chiama `mark_invalidated_by_tx`
+  e si salva. Al riavvio di `task_phase1` le vecchie will non sono piu `VALID`,
+  quindi `WillPostponedException` non viene piu sollevata e la will viene
+  ricostruita direttamente. Risultato: **una sola** firma di invalidazione,
+  poi la new will.
+
+### Test
+- Aggiunti 2 test in `tests/test_core_will.py`
+  (`test_will_mark_invalidated_by_tx`, `test_will_mark_invalidated_by_tx_no_match`)
+  e l'assert di gerarchia per `WillPostponedException`.
+- 184 test ufficiali passati; smoke test ed external-zip test OK; `ruff` senza
+  nuove segnalazioni.
+
+Confermato dall'utente: **"confermo che funziona"**.
