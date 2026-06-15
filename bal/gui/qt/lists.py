@@ -451,6 +451,8 @@ class PreviewList(MyTreeView, MessageBoxMixin):
                 self.bal_window.bal_plugin.read_file("icons/wizard.png")
             )
         )
+        # Tooltip so the icon is self-explanatory when hovered.
+        wizard.setToolTip(_("Wizard - Build your will"))
         wizard.clicked.connect(self.bal_window.init_wizard)
         # display = QPushButton(_("Display"))
         # display.clicked.connect(self.bal_window.preview_modal_dialog)
@@ -461,13 +463,20 @@ class PreviewList(MyTreeView, MessageBoxMixin):
                 self.bal_window.bal_plugin.read_file("icons/reload.png")
             )
         )
+        # Tooltip so the icon is self-explanatory when hovered.
+        refresh.setToolTip(_("Check"))
         refresh.clicked.connect(self.check)
 
         widget = QWidget(self)
         hlayout = QHBoxLayout(widget)
+        hlayout.setContentsMargins(0, 0, 0, 0)
         self.will_settings_widget = WillSettingsWidget(self.bal_window, self)
-        hlayout.addWidget(self.will_settings_widget)
+        # Toolbar order (left -> right):
+        #   Wizard | Delivery time | Check Alive | Calendar | Check (refresh)
+        # The Wizard button goes first (leftmost); the settings widget already
+        # lays out delivery/check-alive/calendar in that order internally.
         hlayout.addWidget(wizard)
+        hlayout.addWidget(self.will_settings_widget)
         hlayout.addWidget(refresh)
         toolbar.insertWidget(2, widget)
 

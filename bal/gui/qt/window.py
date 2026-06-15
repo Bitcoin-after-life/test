@@ -14,6 +14,8 @@ The actual Bitcoin logic lives in :mod:`bal.core`; this class only coordinates
 it with the GUI.
 """
 
+import threading
+
 from .common import *
 from .common import _, _logger  # underscore names are not re-exported by "import *"
 from .widgets import LockTimeWidget, PercAmountEdit, WillSettingsWidget
@@ -898,15 +900,50 @@ class BalWindow:
 
     def check_transactions_task(self, will):
         start = time.time()
-        for wid, w in will.items():
-            if self.waiting_dialog._stopping:
-                return
-            if w.we:
-                self.waiting_dialog.update(
-                    "checking transaction: {}\n willexecutor: {}".format(wid, w.we["url"])
-                )
+        # Servers are now contacted in parallel (see
+        # Willexecutors.check_transactions_parallel) with a fast-fail timeout and
+        # a global deadline, so a single slow/dead will-executor no longer
+        # freezes the "checking transaction" dialog for minutes.  The dialog
+        # shows live progress plus an elapsed-time counter (Xs / DEADLINEs).
+        targets = [(wid, w.we["url"]) for wid, w in will.items() if w.we]
+        total = len(targets)
+        deadline = Willexecutors.CHECK_GLOBAL_DEADLINE
+        done = {"count": 0}
 
-                w.set_check_willexecutor(Willexecutors.check_transaction(wid, w.we["url"]))
+        def _status_line():
+            return "{} {}/{} ({}s / {}s)".format(
+                _("Checking transactions"), done["count"], total,
+                min(int(time.time() - start), deadline), deadline,
+            )
+
+        def on_each(wid, url, res, exc):
+            # Reuse the original per-item logic: set_check_willexecutor handles
+            # both a real response and a None/failure (-> CHECK_FAIL).
+            try:
+                will[wid].set_check_willexecutor(res)
+            except Exception as e:
+                _logger.error(f"check on_each error for {wid}: {e}")
+            done["count"] += 1
+            self.waiting_dialog.update(_status_line())
+
+        def on_timeout(wid, url):
+            # The global deadline elapsed before this server answered: mark the
+            # item as failed (None response) so the user can retry later.
+            try:
+                will[wid].set_check_willexecutor(None)
+            except Exception as e:
+                _logger.error(f"check on_timeout error for {wid}: {e}")
+
+        def on_tick():
+            if getattr(self.waiting_dialog, "_stopping", False):
+                return
+            self.waiting_dialog.update(_status_line())
+
+        if total:
+            self.waiting_dialog.update(_status_line())
+            Willexecutors.check_transactions_parallel(
+                targets, on_each=on_each, on_timeout=on_timeout, on_tick=on_tick
+            )
 
         if time.time() - start < 3:
             time.sleep(3 - (time.time() - start))
@@ -1005,8 +1042,43 @@ class BalWindow:
         if fn_on_failure is None:
             fn_on_failure = log_error
 
+        base_msg = _("Downloading will-executors list...")
+        download_start = time.time()
+        # Upper bound shown to the user.  fetch_will_executors_list tries up to
+        # two endpoints, each with timeout=10 and one retry (~21s worst case),
+        # so ~45s is a realistic maximum.  Showing "Xs / 45s" tells the user how
+        # long they may have to wait instead of an open-ended counter.
+        download_deadline = 45
+
         def task():
-            return self.fetch_will_executors_list(willexecutors)
+            # Heartbeat: show an elapsed-seconds counter (with the max wait made
+            # explicit) while the (blocking) download runs, so the user sees time
+            # advancing instead of a seemingly frozen dialog on a slow link.
+            stop_heartbeat = threading.Event()
+
+            def _heartbeat():
+                while not stop_heartbeat.wait(1.0):
+                    if getattr(self.waiting_dialog, "_stopping", False):
+                        return
+                    try:
+                        self.waiting_dialog.update(
+                            "{} ({}s / {}s)".format(
+                                base_msg,
+                                min(int(time.time() - download_start),
+                                    download_deadline),
+                                download_deadline,
+                            )
+                        )
+                    except Exception:
+                        return
+
+            hb = threading.Thread(target=_heartbeat, name="bal-dl-hb",
+                                  daemon=True)
+            hb.start()
+            try:
+                return self.fetch_will_executors_list(willexecutors)
+            finally:
+                stop_heartbeat.set()
 
         def on_success(result):
             if result:
@@ -1019,9 +1091,8 @@ class BalWindow:
             _logger.error(f"download_list failed: {exc_info}")
             self.show_warning(_(self.DOWNLOAD_FAILED_MESSAGE))
 
-        msg = _("Downloading will-executors list...")
         self.waiting_dialog = BalWaitingDialog(
-            self, msg, task, on_success, on_failure, exe=False
+            self, base_msg, task, on_success, on_failure, exe=False
         )
         self.waiting_dialog.exe()
 
@@ -1034,9 +1105,23 @@ class BalWindow:
         # every server's (possibly timing-out) request.
         pinged = set()
         failed = set()
+        total = len(wes)
+        ping_start = time.time()
+
+        ping_deadline = Willexecutors.PUSH_GLOBAL_DEADLINE
 
         def get_title():
+            # Header shows progress + an elapsed-seconds counter with the max
+            # wait made explicit (e.g. "3s / 30s"), so the user sees time
+            # advancing and knows how long it may take, instead of a seemingly
+            # frozen dialog.
+            answered = len(pinged) + len(failed)
             msg = _("Ping Will-Executors:")
+            msg += "  {}/{} ({}s / {}s)".format(
+                answered, total,
+                min(int(time.time() - ping_start), ping_deadline),
+                ping_deadline,
+            )
             msg += "\n\n"
             for url in wes:
                 urlstr = "{:<50}: ".format(url[:50])
@@ -1066,7 +1151,18 @@ class BalWindow:
         except Exception:
             pass
 
-        Willexecutors.ping_servers_parallel(wes, on_each=on_each)
+        # Refresh the elapsed-seconds counter while the (blocking) parallel ping
+        # runs.  The tick is driven from THIS thread by ping_servers_parallel,
+        # the same thread that drives on_each, so the dialog repaint is reliable.
+        def on_tick():
+            if getattr(self.waiting_dialog, "_stopping", False):
+                return
+            try:
+                self.waiting_dialog.update(get_title())
+            except Exception:
+                pass
+
+        Willexecutors.ping_servers_parallel(wes, on_each=on_each, on_tick=on_tick)
 
     def ping_willexecutors(self, wes, fn_on_success, fn_on_failure=None):
         def on_success(result):

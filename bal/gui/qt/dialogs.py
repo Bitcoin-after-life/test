@@ -725,6 +725,20 @@ class BalBuildWillDialog(BalDialog):
             # check logic untouched.
             already_present = []
             retry_flag = {"value": False}
+            total = len(selected)
+            done = {"count": 0}
+
+            deadline = Willexecutors.PUSH_GLOBAL_DEADLINE
+
+            def _status_line():
+                # e.g. "Broadcasting your will to executors: 2/3 (5s / 30s)".
+                # The "/ 30s" makes the maximum wait explicit, so the user knows
+                # the wizard will proceed by then (the global deadline) instead
+                # of wondering how long the counter will keep climbing.
+                return "{} {}/{} ({}s / {}s)".format(
+                    _("Broadcasting"), done["count"], total,
+                    min(int(time.time() - push_start), deadline), deadline,
+                )
 
             def on_each(url, willexecutor, ok, exc):
                 # Runs from a worker thread.  Do only thread-safe book-keeping
@@ -739,18 +753,50 @@ class BalBuildWillDialog(BalDialog):
                     for wid in willexecutor["txsids"]:
                         self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
                     retry_flag["value"] = True
+                done["count"] += 1
+                self.msg_edit_row("{} : {}".format(url, "Ok" if ok else "Ko"))
+                self.msg_set_pushing(_status_line())
+
+            def on_timeout(url, willexecutor):
+                # The global deadline elapsed before this server answered.  Mark
+                # its txs as failed (so the user can retry later) and show it.
+                for wid in willexecutor.get("txsids", []):
+                    self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
+                retry_flag["value"] = True
                 self.msg_edit_row(
-                    "{} : {}".format(url, "Ok" if ok else "Ko")
+                    "{} : {}".format(url, self.msg_error(_("Timeout - no answer")))
                 )
 
             if self._stopping:
                 return
             # Push to all selected will-executors in parallel: a slow/dead
             # server no longer blocks the others, so the wizard's "Broadcasting"
-            # step is no longer sequential.  Each server still keeps its own
-            # retry behaviour inside push_transactions_to_willexecutor.
-            Willexecutors.push_transactions_parallel(selected, on_each=on_each)
+            # step is no longer sequential.  Each server keeps a short retry
+            # behaviour, and a global deadline guarantees the wizard always
+            # proceeds even if a server never answers.
+            push_start = time.time()
+            self.msg_set_pushing(_status_line())
 
+            # Refresh the elapsed-seconds counter while the (blocking) parallel
+            # push runs, so the user sees time advancing instead of a frozen
+            # "Trasmissione".  The tick is driven from THIS (Task) thread by
+            # push_transactions_parallel, the same thread that drives on_each, so
+            # the pyqtSignal repaint is reliable (a separate heartbeat thread's
+            # signal emissions were not being marshalled and never repainted).
+            def on_tick():
+                if self._stopping:
+                    return
+                self.msg_set_pushing(_status_line())
+
+            Willexecutors.push_transactions_parallel(
+                selected, on_each=on_each, on_timeout=on_timeout, on_tick=on_tick
+            )
+
+            # Final summary line with the total elapsed time.
+            self.msg_set_pushing(
+                "{}/{} ({}s)".format(done["count"], total,
+                                     int(time.time() - push_start))
+            )
             retry = retry_flag["value"]
 
             # Verify the "already present" servers (sequential, original logic).

@@ -150,6 +150,7 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
         + " - y: number of years after currrent day(ex: 1y means one year from today)\n"
     )
     label_text = None
+    tooltip_text = None
     base_field = None
 
     def __init__(self, bal_window, parent, default_locktime=None):
@@ -182,6 +183,10 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
         #hbox.addWidget(QLabel(self.label_text))
         help_button=HelpButton(self.help_text)
         help_button.setText(self.label_text)
+        # Show a short label (e.g. "Delivery time" / "Check Alive") when the
+        # user hovers the icon, so the emoji button is self-explanatory.
+        if self.tooltip_text:
+            help_button.setToolTip(_(self.tooltip_text))
         #help_button.setStyleSheet("font-size: 155555);
         hbox.addWidget(help_button)
         self.combo.currentIndexChanged.connect(self.on_current_index_changed)
@@ -422,6 +427,7 @@ class ThresholdTimeWidget(BalTimeEditWidget):
     )
     label_text = "🚨"
     #label_text = "Check Alive"
+    tooltip_text = "Check Alive"
     base_field = "threshold"
 
     def __init__(self, bal_window, parent, init_value=None):
@@ -442,6 +448,7 @@ class LockTimeWidget(BalTimeEditWidget):
     )
     label_text = "🚛"
     #label_text = "Locktime"
+    tooltip_text = "Delivery time"
     base_field = "locktime"
 
     def __init__(self, bal_window, parent, init_value=None):
@@ -468,6 +475,8 @@ class WillSettingsWidget(QWidget):
                 self.bal_window.bal_plugin.read_file("icons/calendar.png")
             )
         )
+        # Tooltip so the icon is self-explanatory when hovered.
+        self.calendar_button.setToolTip(_("Calendar"))
         self.calendar_button.clicked.connect(self.open_or_save_calendar)
         self.widgets["locktime"] = LockTimeWidget(bal_window, self)
         self.widgets["threshold"] = ThresholdTimeWidget(bal_window, self)
