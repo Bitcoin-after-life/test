@@ -115,22 +115,31 @@ def main(pkg: str) -> int:
         "on_close must reset _menubar_initialized so the window can be reused")
     print("[OK] init_menubar_tools is idempotent (no duplicate tabs/menu)")
 
-    # REGRESSION: create_status_bar must stay a no-op, like the original plugin
-    # (whose body had an early ``return`` before building the StatusBarButton).
-    # Re-adding the status-bar button made a stray condensed icon+text element
-    # appear in the wrong place after restart / wallet switch.
-    csb_src = inspect.getsource(plugin_mod.Plugin.create_status_bar)
-    csb_active = _active_source_without_strings(plugin_mod)  # whole module sans strings
+    # REGRESSION: create_status_bar MUST add the BAL status-bar icon (bottom
+    # right of the Electrum window).  It signals that the plugin is installed
+    # and, when clicked, opens the plugin settings.  An earlier change wrongly
+    # turned this into a no-op while chasing the "condensed menu" bug (whose
+    # real cause was a Windows OverflowError, fixed elsewhere), which made the
+    # icon disappear.  The icon must stay, and must not be duplicated on
+    # restart / wallet switch (hence the _statusbar_buttons book-keeping).
     csb_body = inspect.getsource(plugin_mod.Plugin.create_status_bar)
-    # The executable body must not add a permanent widget / build the button.
-    # Strip comments to avoid matching the explanatory note.
     csb_code = "\n".join(
         line for line in csb_body.splitlines()
         if not line.lstrip().startswith("#")
     )
-    assert "addPermanentWidget" not in csb_code, (
-        "create_status_bar must not add a status-bar widget (original is a no-op)")
-    print("[OK] create_status_bar is a no-op (matches original)")
+    assert "StatusBarButton" in csb_code, (
+        "create_status_bar must build a StatusBarButton (the BAL icon)")
+    assert "addPermanentWidget" in csb_code, (
+        "create_status_bar must add the BAL icon to the status bar")
+    assert "settings_dialog" in csb_code, (
+        "clicking the BAL icon must open settings_dialog")
+    assert "_statusbar_buttons" in csb_code, (
+        "create_status_bar must track buttons to avoid duplicate icons")
+    # __init__ must initialise the tracking dict.
+    init_code = inspect.getsource(plugin_mod.Plugin.__init__)
+    assert "_statusbar_buttons" in init_code, (
+        "Plugin.__init__ must initialise self._statusbar_buttons")
+    print("[OK] create_status_bar adds the BAL icon + opens settings on click")
 
     print(f"\n[OK] all GUI-fix checks passed for package {pkg!r}")
     return 0

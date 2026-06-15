@@ -14,8 +14,11 @@ One :class:`bal.gui.qt.window.BalWindow` is created per top-level wallet window
 and cached in ``self.bal_windows``.
 """
 
+from electrum.gui.qt.main_window import StatusBarButton
+
 from .common import *
 from .common import _, _logger  # underscore names are not re-exported by "import *"
+from .common import read_QIcon_from_bytes
 from .widgets import BalCheckBox, BalLineEdit, BalTextEdit
 from .window import BalWindow
 from .dialogs import BalDialog
@@ -38,6 +41,10 @@ class Plugin(BalPlugin):
         _logger.info("INIT BALPLUGIN")
         BalPlugin.__init__(self, parent, config, name)
         self.bal_windows = {}
+        # Status-bar buttons, keyed by id(sb.window()).  Tracking them lets us
+        # remove a stale button before creating a fresh one when a wallet is
+        # switched / Electrum is restarted, so the icon is never duplicated.
+        self._statusbar_buttons = {}
 
     @hook
     def init_qt(self, gui_object):
@@ -88,15 +95,34 @@ class Plugin(BalPlugin):
 
     @hook
     def create_status_bar(self, sb):
-        # NOTE: intentionally a no-op, matching the original plugin.  The
-        # original code had an early ``return`` before building the
-        # StatusBarButton, i.e. the button was deliberately disabled.  Adding
-        # the button here caused a stray, condensed icon+text element to be
-        # rendered in the wrong place (near the top, under the Electrum logo)
-        # after a restart / wallet switch.  Settings are already reachable via
-        # Tools -> Plugins, so we keep the original behaviour.
-        _logger.info("HOOK create status bar (no-op)")
-        return
+        # Show the BAL icon in the status bar (bottom-right): it signals that
+        # the Bitcoin After Life plugin is installed and, when clicked, quickly
+        # opens the plugin settings (settings_dialog).
+        #
+        # NOTE: this was NOT the "condensed menu/tabs" bug under the Electrum
+        # logo -- that one was a Windows OverflowError (year 2038), fixed
+        # separately.  The icon must therefore be kept.
+        #
+        # To avoid a duplicated icon on restart / wallet switch, we track the
+        # button by id(sb.window()) and remove the stale one before creating a
+        # fresh one.
+        _logger.info("HOOK create status bar")
+        key = id(sb.window())
+        old = self._statusbar_buttons.pop(key, None)
+        if old is not None:
+            try:
+                old.setParent(None)
+                old.deleteLater()
+            except Exception:
+                pass
+        b = StatusBarButton(
+            read_QIcon_from_bytes(self.read_file("icons/bal32x32.png")),
+            "Bal " + _("Bitcoin After Life"),
+            lambda: self.settings_dialog(sb.window()),
+            sb.height(),
+        )
+        sb.addPermanentWidget(b)
+        self._statusbar_buttons[key] = b
 
     @hook
     def init_menubar(self, window):
