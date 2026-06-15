@@ -381,7 +381,10 @@ class BalWizardLocktimeAndFeeWidget(BalWizardWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        layout.addWidget(WillSettingsWidget(self.bal_window, self, "v"))
+        # The wizard ("Build your will") is the ONLY place the delivery time,
+        # check alive and fee can be edited, so it is the only read_only=False.
+        layout.addWidget(WillSettingsWidget(self.bal_window, self, "v",
+                                            read_only=False))
         spacer_widget = QWidget()
         spacer_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding

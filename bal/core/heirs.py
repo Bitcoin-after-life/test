@@ -306,6 +306,42 @@ def get_change_output(wallet, in_amount, out_amount, fee):
         return out
 
 
+def _json_safe(value, _path="heirs", _depth=0):
+    """Return a JSON-serializable deep copy of *value*.
+
+    The wallet DB persists the heirs dict via ``json_db.put``, which calls
+    ``copy.deepcopy`` on the value.  If any nested element is a live runtime
+    object (e.g. one holding a ``threading.RLock``), deepcopy raises
+    ``TypeError: cannot pickle '_thread.RLock' object`` and the whole
+    "Build will" task fails.
+
+    To make persistence robust we coerce the structure to plain
+    JSON-compatible types (dict / list / str / int / float / bool / None).
+    Anything else is converted to ``str(value)`` and logged with its path so
+    the offending field can be identified, instead of crashing the task.
+    """
+    # Primitive JSON scalars are kept as-is.
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, dict):
+        return {
+            str(k): _json_safe(v, "{}[{!r}]".format(_path, k), _depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [
+            _json_safe(v, "{}[{}]".format(_path, i), _depth + 1)
+            for i, v in enumerate(value)
+        ]
+    # Unexpected runtime object: do not let it reach deepcopy.  Log where it
+    # was found so the real source can be fixed, then store a safe string.
+    _logger.error(
+        "heirs.save: non-serializable value at {} (type={}); coercing to str. "
+        "value={!r}".format(_path, type(value).__name__, value)
+    )
+    return str(value)
+
+
 class Heirs(dict, Logger):
 
     def __init__(self, wallet):
@@ -322,7 +358,11 @@ class Heirs(dict, Logger):
         invalidate_inheritance_transactions(wallet)
 
     def save(self):
-        self.db.put("heirs", dict(self))
+        # Sanitise the heirs mapping before handing it to the wallet DB: this
+        # guarantees only JSON-serializable values are stored and prevents the
+        # "cannot pickle '_thread.RLock' object" failure that aborted the
+        # Build-will task when a runtime object slipped into an heir value.
+        self.db.put("heirs", _json_safe(dict(self)))
 
     def import_file(self, path):
         data = read_json_file(path)

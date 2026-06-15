@@ -64,6 +64,23 @@ class BalTxFeesWidget(QWidget):
 
     def doubleclick(self, event=None):
         pass
+
+    def set_read_only(self, read_only=True):
+        # Show the fee but make it non-editable (no spin arrows, no keyboard),
+        # so it can only be changed from the "Build your will" wizard.
+        self.txfee_widget.setReadOnly(read_only)
+        self.txfee_widget.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+            if read_only
+            else QAbstractSpinBox.ButtonSymbols.UpDownArrows
+        )
+        # Light-grey background when locked, so the read-only state is visible
+        # (same look as the date fields); empty stylesheet restores the
+        # editable appearance used inside the wizard.
+        self.txfee_widget.setStyleSheet(
+            "QSpinBox{background-color:#f0f0f0;}" if read_only else ""
+        )
+
     def get_value(self):
         return self.txfee_widget.value()
 
@@ -275,6 +292,17 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
             self.current_value = x
             self.bal_window.update_setting_widgets(x, self.base_field)
 
+    def set_read_only(self, read_only=True):
+        """Show the value but make it non-editable.
+
+        Used everywhere except the "Build your will" wizard, where the date is
+        the only place the user is allowed to change it. The Raw/Date combo is
+        disabled and both editors become read-only with no spin buttons.
+        """
+        self.combo.setEnabled(not read_only)
+        for w in self.editors:
+            w.set_read_only(read_only)
+
 
 
 class TimeRawEditWidget(QWidget):
@@ -294,6 +322,14 @@ class TimeRawEditWidget(QWidget):
         self.editor.editingFinished.connect(self.editingFinished.emit)
         self.get_value = self.editor.get_value
         self.set_value = self.editor.set_value
+
+    def set_read_only(self, read_only=True):
+        self.editor.setReadOnly(read_only)
+        # Match the Date editor: grey background when locked so the read-only
+        # state is visible; empty stylesheet restores the editable look.
+        self.editor.setStyleSheet(
+            "QLineEdit{background-color:#f0f0f0;}" if read_only else ""
+        )
 
 
 
@@ -387,6 +423,24 @@ class LockTimeDateEdit(QDateTimeEdit, _LockTimeEditor):
         #self.setDateTime(QDateTime.currentDateTime())
         self.time_edit = time_edit
 
+    def set_read_only(self, read_only=True):
+        # Read-only display: keyboard editing disabled and the up/down spin
+        # arrows removed, so the date can only be changed from the wizard.
+        self.setReadOnly(read_only)
+        self.setButtonSymbols(
+            QAbstractSpinBox.ButtonSymbols.NoButtons
+            if read_only
+            else QAbstractSpinBox.ButtonSymbols.UpDownArrows
+        )
+        # A read-only QDateTimeEdit keeps a white background by default, which
+        # does not visually signal that it is locked.  Paint it light grey (like
+        # the disabled combo/fee fields next to it) so the user sees at a glance
+        # that the date is not editable here; an empty stylesheet restores the
+        # default look when the field is made editable again (in the wizard).
+        self.setStyleSheet(
+            "QDateTimeEdit{background-color:#f0f0f0;}" if read_only else ""
+        )
+
     def get_value(self) -> Optional[int]:
         #dt = self.dateTime().toPyDateTime()
         #locktime = int(time.mktime(dt.timetuple()))
@@ -419,11 +473,15 @@ class LockTimeDateEdit(QDateTimeEdit, _LockTimeEditor):
 
 
 class ThresholdTimeWidget(BalTimeEditWidget):
+    # rich_text=True is used by the HelpButton, so HTML tags (<b>, <br>) render.
     help_text = (
-        "Check to ask for invalidation.\n\n"
-        "When less then this time is missing, ask to invalidate.\n"
-        "If you fail to invalidate during this time, your transactions will be delivered to your heirs.\n\n"
-        f"{BalTimeEditWidget.help_text}"
+        "<b>CHECK ALIVE</b><br><br>"
+        "Check to ask for invalidation.<br><br>"
+        "When less then this time is missing, ask to invalidate.<br>"
+        "If you fail to invalidate during this time, your transactions will be delivered to your heirs.<br><br>"
+        "if you choose Raw, you can insert various options based on suffix:<br>"
+        " - d: number of days after current day(ex: 1d means tomorrow)<br>"
+        " - y: number of years after currrent day(ex: 1y means one year from today)<br>"
     )
     label_text = "🚨"
     #label_text = "Check Alive"
@@ -441,10 +499,14 @@ class ThresholdTimeWidget(BalTimeEditWidget):
 
 
 class LockTimeWidget(BalTimeEditWidget):
+    # rich_text=True is used by the HelpButton, so HTML tags (<b>, <br>) render.
     help_text = (
-        "Set Locktime for transactions.\n"
-        "Any time is needed transaction will be anticipated by 1day\n"
-        f"{BalTimeEditWidget.help_text}"
+        "<b>DELIVERY TIME</b><br><br>"
+        "Set Locktime for transactions.<br>"
+        "Any time is needed transaction will be anticipated by 1day<br><br>"
+        "if you choose Raw, you can insert various options based on suffix:<br>"
+        " - d: number of days after current day(ex: 1d means tomorrow)<br>"
+        " - y: number of years after currrent day(ex: 1y means one year from today)<br>"
     )
     label_text = "🚛"
     #label_text = "Locktime"
@@ -463,10 +525,15 @@ class LockTimeWidget(BalTimeEditWidget):
 
 class WillSettingsWidget(QWidget):
 
-    def __init__(self, bal_window: "BalWindow", parent, layout_type="h"):
+    def __init__(self, bal_window: "BalWindow", parent, layout_type="h",
+                 read_only=True):
         self.widgets = {}
         QWidget.__init__(self, parent)
         self.bal_window = bal_window
+        # When read_only=True (toolbars, Heirs tab) the delivery time, check
+        # alive and fee fields are display-only; they can only be edited from
+        # the "Build your will" wizard, which passes read_only=False.
+        self.read_only = read_only
         box = QHBoxLayout(self) if layout_type == "h" else QVBoxLayout(self)
 
         self.calendar_button = QPushButton()
@@ -495,6 +562,11 @@ class WillSettingsWidget(QWidget):
         box.addWidget(self.widgets["threshold"])
         box.addWidget(self.calendar_button)
         box.addWidget(self.widgets["baltx_fees"])
+
+        if self.read_only:
+            self.widgets["locktime"].set_read_only(True)
+            self.widgets["threshold"].set_read_only(True)
+            self.widgets["baltx_fees"].set_read_only(True)
 
     def create_alarms(self, alarm_start, alarm_end):
         days = (alarm_end - alarm_start).days+1

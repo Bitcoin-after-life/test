@@ -432,11 +432,26 @@ class BalWindow:
         self.bal_plugin.WILL_SETTINGS.set(self.will_settings)
 
     def init_heirs_to_locktime(self, multiverse=False):
-        #pass
-        for heir in self.heirs:
-            h = self.heirs[heir]
-            if not multiverse:
-                self.heirs[heir] = [h[0], h[1], self.will_settings["locktime"]]
+        if multiverse:
+            return
+        # Coerce the locktime to a plain serializable scalar: will_settings is
+        # read from Electrum's config and a non-primitive value here would end
+        # up inside the heirs dict and break json_db persistence (this was one
+        # path to the "cannot pickle '_thread.RLock' object" error).
+        locktime = self.will_settings["locktime"]
+        if not isinstance(locktime, (int, float, str)):
+            locktime = str(locktime)
+        # Iterate over a snapshot of the keys: assigning to self.heirs[...]
+        # triggers Heirs.__setitem__ -> save(), which mutates the mapping while
+        # we iterate it.  Building the new values first and applying them after
+        # the loop avoids "dict changed size during iteration" and the repeated
+        # save() on every heir.
+        updates = {
+            heir: [self.heirs[heir][0], self.heirs[heir][1], locktime]
+            for heir in list(self.heirs)
+        }
+        for heir, value in updates.items():
+            self.heirs[heir] = value
 
     def init_class_variables(self):
         if not self.heirs:
