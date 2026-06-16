@@ -609,3 +609,62 @@ Modifica centralizzata negli helper `msg_ok`, `msg_error`, `msg_warning`,
 Confermato dall'utente sui dati reali: dopo Sign -> Broadcast -> Check le
 transazioni gia inviate sono tornate verdi ("confirmed on server"); la lista
 torna pulita; il grassetto e l'aggiornamento delle hide-flag funzionano.
+
+## 17. UI polish and bug fix — signed-tx colour, wizard, Building Will dialog (v0.3.3)
+
+This session groups several behaviour-invariant UI refinements plus one colour
+bug fix.  All comments and code remain in English; only the chat with the
+author was in Italian.
+
+### FIX — Signed-but-not-sent transaction shown RED instead of blue
+`core/will.py` (`needs_server_check`): a previous-session change (section 16,
+"FIX 2") had removed the `PUSHED` requirement from `needs_server_check`, so a
+will that was *signed but never broadcast* was still server-queried.  The query
+returned CHECK_FAIL, and because `status_color()` checks CHECK_FAIL (red,
+`#e83845`) before COMPLETE (blue, `#2bc8ed`), the row turned red.  Restored the
+original Gitea `check()` condition by adding back `and w.get_status("PUSHED")`,
+so only already-broadcast wills are server-checked.  A signed-but-not-sent will
+now stays blue (COMPLETE) as in the original.
+- `tests/test_core_will.py` (`test_needs_server_check`): a freshly-built item
+  (VALID, not PUSHED) now correctly expects `False`.
+
+### Wizard "Will Settings" — equal-width, left-aligned rows
+`gui/qt/widgets.py` (`WillSettingsWidget`, vertical layout): the calendar button
+and the fee field used to stretch to the dialog's right edge, far wider than the
+date rows.  Now every row is capped to the widest date-row width (`row_w`) and
+left-aligned, so they form a tidy column.  The leading icons keep their original
+`HelpButton` width (`icon_w` is used only as a spacer in front of the calendar,
+never to widen the icons themselves).
+
+### Wizard button — icon + text
+`gui/qt/lists.py` (`create_toolbar`): the "build your will" toolbar button is now
+more inviting: a 28×28 wizard icon plus a bold `"Create your will"` caption,
+`setMinimumHeight(40)`.  `gui/qt/common.py` gained `QSize` in the QtCore import.
+
+### Building Will dialog — clearer final report + manual Close
+`gui/qt/dialogs.py` (`BalBuildWillDialog`):
+- The closing summary line is no longer a bare "Ok": it now has an explicit
+  left-side label, `"All done: Ok"`, like the other result rows.
+- A blank separator row is inserted above "All done" so the overall outcome is
+  visually detached from the per-step rows.
+- The four `"checking variables"` status strings are capitalised to
+  `"Checking variables"` to match the rows below; the redundant trailing colon
+  on the final one was dropped (`msg_set_status` already adds `":\t"`).
+- The final auto-closing countdown (`self.wait(5)`) was replaced by an explicit
+  right-aligned **"Close"** button (`_add_close_button` / `_on_close_clicked`).
+  The dialog now stays open until the user dismisses it, so the full report can
+  be read at leisure.  The intermediate technical pauses (`wait(10)`, `wait(5)`,
+  `wait(3)`) are kept.  Closing still shows the persistent "next steps"
+  (Sign / Broadcast) popup when `self._next_steps_hint` is set.
+
+### Preview helpers (dev-only, not shipped logic)
+`tests/preview_wizard_settings_align.py`, `tests/preview_wizard_button.py`,
+`tests/preview_building_will_close_btn.py`: small offscreen scripts used to
+render before/after mock-ups for visual approval.
+
+### Test
+- 186 official tests pass; smoke test, external-zip test OK.
+- `ruff` reports only the pre-existing baseline false positives (F401/F403/F405
+  star-import re-exports, one F841, one F541) — no new issues.
+- Version bumped to **0.3.3** (`bal/VERSION`, `bal/__init__.py`,
+  `bal/manifest.json`).

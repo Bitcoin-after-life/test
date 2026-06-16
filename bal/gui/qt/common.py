@@ -49,8 +49,8 @@ from electrum.transaction import SerializationError, Transaction, tx_from_any
 from electrum.util import (DECIMAL_POINT, FileExportFailed, UserCancelled,
                            decimal_point_to_base_unit_name, read_json_file,
                            write_json_file)
-from PyQt6.QtCore import (QDateTime, QModelIndex, QPersistentModelIndex, Qt,
-                          QTimer, pyqtSignal)
+from PyQt6.QtCore import (QDateTime, QModelIndex, QPersistentModelIndex, QSize,
+                          Qt, QTimer, pyqtSignal)
 from PyQt6.QtGui import (QColor, QPainter, QPalette, QStandardItem,
                          QStandardItemModel)
 from PyQt6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QCheckBox,
