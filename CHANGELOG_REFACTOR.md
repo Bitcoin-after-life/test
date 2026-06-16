@@ -517,43 +517,95 @@ stato. Le funzioni `server_status_text()` e `server_status_tooltip()` sono in
 
 Confermato dall'utente: **"mi pare che funziona"**.
 
-## 15. BUGFIX: doppia invalidazione al posticipo dell'eredita (v0.3.1)
+## 15. TENTATIVO E REVERT: fix doppia invalidazione al posticipo (v0.3.1 -> v0.3.2)
 
-### Sintomo segnalato dall'utente
-Posticipando il delivery time, il plugin chiedeva di firmare **due volte** la
-transazione di invalidazione ("Invalidate your old will"), e solo dopo faceva
-firmare la nuova eredita ("Prepare new will").
+### v0.3.1 (RITIRATA)
+Per risolvere la doppia firma dell'invalidazione al posticipo, era stato
+introdotto `Will.mark_invalidated_by_tx()`, chiamato in
+`loop_broadcast_invalidating` dopo il broadcast dell'invalidazione, per marcare
+`INVALIDATED` le will che spendevano gli stessi UTXO della tx di invalidazione
+e persistere lo stato con `save_willitems`.
 
-### Causa
-Il percorso di posticipo era:
-1. `task_phase1` rileva il posticipo -> `WillPostponedException` -> costruisce
-   la tx di invalidazione -> 1ª firma.
-2. Dopo il broadcast, `on_success_invalidate` **riavvia** `task_phase1` per
-   ricostruire la nuova eredita.
-3. **Ma** le will item vecchie erano ancora marcate `COMPLETE`/`PUSHED` con la
-   stessa `tx.locktime` di prima (l'invalidazione on-chain non aggiornava lo
-   stato in memoria), quindi la condizione del posticipo scattava di **nuovo**
-   -> `WillPostponedException` -> **2ª** firma di invalidazione.
-4. Solo al terzo giro la will veniva finalmente ricostruita.
+### Perche e stata ritirata
+La modifica ha introdotto una regressione grave segnalata dall'utente:
+**la lista eredita mostrava ancora le vecchie eredita e l'aggiornamento di
+eredi/date risultava incoerente**.
 
-### Correzione
-- **`core/will.py`**: nuovo metodo statico `Will.mark_invalidated_by_tx(will,
-  tx)` che marca come `INVALIDATED` ogni will valida che spende almeno uno dei
-  prevout consumati dalla tx di invalidazione appena trasmessa. Settare
-  `INVALIDATED` azzera automaticamente il flag `VALID` (logica gia esistente in
-  `WillItem.set_status`), cosi quelle will escono da `only_valid_list`.
-- **`gui/qt/dialogs.py`** (`loop_broadcast_invalidating`): dopo il broadcast
-  **riuscito** (quando si ottiene il `txid`), si chiama `mark_invalidated_by_tx`
-  e si salva. Al riavvio di `task_phase1` le vecchie will non sono piu `VALID`,
-  quindi `WillPostponedException` non viene piu sollevata e la will viene
-  ricostruita direttamente. Risultato: **una sola** firma di invalidazione,
-  poi la new will.
+Causa: `loop_broadcast_invalidating` e il punto di broadcast usato per **TUTTI**
+i tipi di invalidazione (posticipo, CheckAlive, will scaduto/anticipato), non
+solo per il posticipo. Inoltre il metodo marcava e **persisteva** lo stato
+`INVALIDATED` su tutte le will item che condividevano gli UTXO del wallet
+(tipicamente tutte). Queste will item invalidate restavano poi in memoria e su
+disco, inquinando la ricostruzione di eredi/date e lasciando vecchie voci nella
+lista.
+
+### v0.3.2 (questa versione): REVERT completo
+- Rimosso `Will.mark_invalidated_by_tx()` da `core/will.py`.
+- Rimossa la chiamata in `gui/qt/dialogs.py` (`loop_broadcast_invalidating`):
+  il metodo torna **identico** alla v0.3.0.
+- Rimossi i due test relativi; mantenuto solo l'assert di gerarchia su
+  `WillPostponedException` (corretto e indipendente).
+- `core/will.py` e `gui/qt/dialogs.py` sono ora **byte-identici** alla v0.3.0
+  funzionante (verificato con `git diff a394cde`).
+
+Il bug della doppia invalidazione al posticipo resta quindi **aperto** e andra
+riaffrontato in modo piu mirato (senza toccare il percorso di broadcast comune e
+senza persistere stati su will che condividono gli UTXO), previa conferma
+dell'utente. La priorita era ripristinare il comportamento corretto di
+lista/eredi/date.
+
+## 16. Aggiornamenti mancati, Check/Close coerenti, e rifinitura UI (v0.3.2)
+
+### FIX 1 - Rimozione di un erede rilevata su Check / chiusura Electrum
+`core/will.py` (`check_willexecutors_and_heirs`): prima il plugin
+rilevava solo l'**aggiunta** di un erede (raise `HeirNotFoundException` quando un
+erede corrente non era piu nella will). Mancava il caso inverso: la
+**rimozione** di un erede. Aggiunto il ramo `else` che lancia
+`HeirNotFoundException` anche quando la will porta ancora un erede che non e piu
+presente nel set di eredi corrente. Cosi la ricostruzione dell'eredita scatta su
+**Check** e alla **chiusura di Electrum** (entrambi usano lo stesso percorso
+`BalBuildWillDialog.build_will_task()`), come deciso dall'utente: nessun
+aggiornamento automatico dopo la modifica, solo manuale con Check / alla
+chiusura.
+
+### FIX 2 - Check interroga i server anche per le will gia inviate
+`core/will.py` (nuovo `Will.needs_server_check(w)`) e
+`gui/qt/lists.py` (`PreviewList.check`): prima il Check interrogava i server solo
+per le will in stato `PUSHED`. Le will gia inviate ma rimaste su "New / Not sent"
+non venivano ricontrollate ("nothing to do"). Ora `needs_server_check` include
+ogni will **VALID** con un will-executor e **non ancora CHECKED**, anche se non
+in stato `PUSHED`. Stesso controllo usato sia dal pulsante Check sia da
+`on_close`.
+
+### FIX 3 - Hide invalidated/replaced da finestra Impostazioni aggiornava la lista
+`core/plugin_base.py` (nuovo `sync_hide_filters()`) e
+`gui/qt/window.py` (`update_all`): le checkbox "Hide Replaced" / "Hide
+Invalidated" nella finestra Impostazioni scrivono direttamente la config
+(`BalConfig.set`) senza toccare i flag in cache `_hide_invalidated` /
+`_hide_replaced` usati dalla lista per filtrare. Risultato: la lista continuava
+a filtrare col valore vecchio finche non si riavviava Electrum. Ora
+`update_all()` chiama `sync_hide_filters()` che ri-legge i flag dalla config,
+quindi qualunque sorgente del cambiamento (toolbar o finestra Impostazioni)
+aggiorna subito la lista.
+
+### Rifinitura UI - Risultati in grassetto nel dialog "Building Will"
+`gui/qt/dialogs.py` (`BalBuildWillDialog`): i **risultati** mostrati a destra di
+ogni riga di stato (es. `Ok`, `Ko`, `Nothing to do`, `Skipped`, `Wait`,
+`Timeout`) sono ora resi in **grassetto**, mantenendo i loro colori
+(verde/rosso/giallo). Le etichette di stato a sinistra restano in peso normale.
+Modifica centralizzata negli helper `msg_ok`, `msg_error`, `msg_warning`,
+`msg_set_status`, piu le righe dei will-executor (push e check) che ora mostrano
+`Ok/Ko` e `True/False` in grassetto + colore (verde/rosso).
 
 ### Test
-- Aggiunti 2 test in `tests/test_core_will.py`
-  (`test_will_mark_invalidated_by_tx`, `test_will_mark_invalidated_by_tx_no_match`)
-  e l'assert di gerarchia per `WillPostponedException`.
-- 184 test ufficiali passati; smoke test ed external-zip test OK; `ruff` senza
-  nuove segnalazioni.
+- 186 test ufficiali passano; smoke test, external-zip test e simulazione dei
+  flussi di aggiornamento (`tests/sim_update_flows.py`) OK; `ruff` senza nuove
+  segnalazioni reali (solo falsi positivi pre-esistenti da star-import).
+- Aggiunti test in `tests/test_core_will.py`:
+  `test_check_heirs_unchanged_is_coherent`,
+  `test_check_heir_removed_triggers_rebuild`,
+  `test_check_heir_added_triggers_rebuild`, `test_needs_server_check`.
 
-Confermato dall'utente: **"confermo che funziona"**.
+Confermato dall'utente sui dati reali: dopo Sign -> Broadcast -> Check le
+transazioni gia inviate sono tornate verdi ("confirmed on server"); la lista
+torna pulita; il grassetto e l'aggiornamento delle hide-flag funzionano.

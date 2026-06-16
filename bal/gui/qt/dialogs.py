@@ -708,19 +708,6 @@ class BalBuildWillDialog(BalDialog):
             self.msg_set_invalidating(self.msg_ok())
             if not txid:
                 _logger.debug(f"should not be none txid: {txid}")
-            else:
-                # The invalidation tx is now broadcast, so the old signed/sent
-                # will transactions spending those same UTXOs can no longer be
-                # mined.  Mark them INVALIDATED (which clears their VALID flag)
-                # so the postpone/expire check does NOT fire a second
-                # invalidation when phase 1 is restarted to rebuild the new
-                # (postponed) will.
-                invalidated = Will.mark_invalidated_by_tx(
-                    self.bal_window.willitems, tx
-                )
-                if invalidated:
-                    _logger.debug(f"invalidated will items: {invalidated}")
-                    self.bal_window.save_willitems()
 
         except TxBroadcastError as e:
             _logger.error(f"fail to broadcast transaction:{e}")
@@ -784,7 +771,10 @@ class BalBuildWillDialog(BalDialog):
                         self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
                     retry_flag["value"] = True
                 done["count"] += 1
-                self.msg_edit_row("{} : {}".format(url, "Ok" if ok else "Ko"))
+                # Show the per-server result (Ok/Ko) in bold + color so the
+                # outcome stands out, keeping the server URL in normal weight.
+                result = self.msg_ok("Ok") if ok else self.msg_error("Ko")
+                self.msg_edit_row("{} : {}".format(url, result))
                 self.msg_set_pushing(_status_line())
 
             def on_timeout(url, willexecutor):
@@ -836,7 +826,7 @@ class BalBuildWillDialog(BalDialog):
                     if self._stopping:
                         return
                     row = self.msg_edit_row(
-                        "checking {} - {} : {}".format(
+                        "checking {} - {} : <b>{}</b>".format(
                             self.bal_window.willitems[wid].we["url"], wid, "Waiting"
                         )
                     )
@@ -844,11 +834,16 @@ class BalBuildWillDialog(BalDialog):
                     w.set_check_willexecutor(
                         Willexecutors.check_transaction(wid, w.we["url"])
                     )
+                    # Show the CHECKED result in bold + color (green True /
+                    # red False) so the outcome stands out, keeping the server
+                    # URL and tx id in normal weight.
+                    checked = self.bal_window.willitems[wid].get_status("CHECKED")
+                    result = self.msg_ok(checked) if checked else self.msg_error(checked)
                     row = self.msg_edit_row(
                         "checked {} - {} : {}".format(
                             self.bal_window.willitems[wid].we["url"],
                             wid,
-                            self.bal_window.willitems[wid].get_status("CHECKED"),
+                            result,
                         ),
                         row,
                     )
@@ -1034,20 +1029,31 @@ class BalBuildWillDialog(BalDialog):
         self.wait_row = self.msg_edit_row(f"Please wait {status}secs", self.wait_row)
 
     def msg_error(self, e):
-        return "<font color='{}'>{}</font>".format(self.COLOR_ERROR, e)
+        # Results are shown in bold so the outcome stands out from the
+        # left-side state label (which stays in normal weight).
+        return "<font color='{}'><b>{}</b></font>".format(self.COLOR_ERROR, e)
 
     def msg_ok(self, e="Ok"):
-        return "<font color='{}'>{}</font>".format(self.COLOR_OK, e)
+        # Results are shown in bold (see msg_error).
+        return "<font color='{}'><b>{}</b></font>".format(self.COLOR_OK, e)
 
     def msg_warning(self, e):
-        return "<font color='{}'>{}</font".format(self.COLOR_WARNING, e)
+        # Results are shown in bold (see msg_error).
+        return "<font color='{}'><b>{}</b></font>".format(self.COLOR_WARNING, e)
 
     def msg_set_status(self, msg, row=None, status=None, color=None):
+        # The left "state" label keeps its normal weight; only the right-side
+        # result (``status``) is rendered in bold so it is easy to read at a
+        # glance.  ``status`` may already contain rich-text emitted by
+        # msg_ok/msg_error/msg_warning (which add their own <b>...</b>); wrapping
+        # it again in <b> is harmless for those cases.
         status = "Wait" if status is None else status
         if color is None:
-            line = f"{_(msg)}:\t{status}"
+            line = "{}:\t<b>{}</b>".format(_(msg), status)
         else:
-            line = "<font color={}>{}:\t{}</font>".format(color, _(msg), status)
+            line = "{}:\t<font color={}><b>{}</b></font>".format(
+                _(msg), color, status
+            )
         return self.msg_edit_row(line, row)
 
     def ask_password(self, msg=None):

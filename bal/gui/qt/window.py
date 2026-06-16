@@ -1227,6 +1227,13 @@ class BalWindow:
 
     def update_all(self):
         try:
+            # Re-sync the cached "hide invalidated/replaced" flags from the
+            # persisted config before refreshing the list.  The Settings dialog
+            # checkboxes write the config directly (without touching the cached
+            # flags), so without this the list would keep filtering with the old
+            # value and the invalidated/replaced rows would not appear/disappear
+            # until Electrum was restarted.
+            self.bal_plugin.sync_hide_filters()
             Will.add_willtree(self.willitems)
             all_utxos = self.wallet.get_utxos()
             utxos_list = Will.utxos_strs(all_utxos)
