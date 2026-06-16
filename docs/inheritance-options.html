@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BAL — Inheritance Options Guide</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --text:#e6edf3; --muted:#9da7b3;
+    --border:#30363d; --accent:#2bc8ed; --red:#e83845; --green:#2ea043;
+    --blue:#2bc8ed; --grey:#8b949e; --amber:#cfa808;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:980px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:2rem;margin:.2em 0 .1em;border-bottom:2px solid var(--accent);padding-bottom:.3em}
+  h2{font-size:1.4rem;margin:2em 0 .4em;border-bottom:1px solid var(--border);padding-bottom:.25em}
+  h3{font-size:1.12rem;margin:1.6em 0 .3em;color:#cdd9e5}
+  p,li{color:var(--text)}
+  blockquote{
+    margin:1em 0;padding:.6em 1em;border-left:4px solid var(--accent);
+    background:var(--panel);border-radius:0 8px 8px 0;color:var(--muted)
+  }
+  blockquote strong{color:var(--text)}
+  code{background:#1f2630;padding:.12em .4em;border-radius:5px;font-size:.9em}
+  table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.93rem;display:block;overflow-x:auto}
+  th,td{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel)}
+  tr:nth-child(even) td{background:#11161d}
+  .yes{color:var(--green);font-weight:700}
+  .no{color:var(--grey);font-weight:700}
+  .fee{color:var(--red);font-weight:700}
+  .pill{display:inline-block;padding:.05em .55em;border-radius:999px;font-size:.78em;font-weight:700;color:#0d1117}
+  .pill.red{background:var(--red);color:#fff}
+  .pill.blue{background:var(--blue)}
+  .pill.green{background:var(--green);color:#fff}
+  .pill.grey{background:var(--grey);color:#fff}
+  .mermaid{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;margin:1.2em 0;overflow-x:auto}
+  .lead{color:var(--muted);font-size:1.05rem}
+  footer{margin-top:3em;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);padding-top:1em}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>BAL — Inheritance Options Guide</h1>
+<p class="lead">How the <strong>Bitcoin After Life</strong> Electrum plugin reacts to every change you can make to
+your will: changing the date (earlier / later), adding or removing an heir, changing percentages, fees or
+will‑executors — and what happens to the transactions held by the will‑executor servers.</p>
+
+<blockquote>This page reflects the <strong>actual behaviour of the code</strong>
+(<code>core/will.py</code> → <code>is_will_valid</code> / <code>check_willexecutors_and_heirs</code> and
+<code>gui/qt/window.py</code> → <code>build_inheritance_transaction</code>). It is meant for end users and
+for anyone wanting to understand the on‑chain consequences of each action.</blockquote>
+
+<h2>1. The mental model in one paragraph</h2>
+<p>Your will is a <strong>tree of pre‑signed Bitcoin transactions</strong>. Each leaf transaction sends your
+coins to your heirs and is <strong>time‑locked</strong> (<code>nLockTime</code>) so it can only be broadcast
+<strong>after</strong> a future date/block. A copy of each signed transaction is handed to one or more
+<strong>will‑executor servers</strong>. While you are alive you periodically prove you are alive (the
+<em>Check‑Alive threshold</em>). When you change anything, BAL chooses between three outcomes:</p>
+<ol>
+  <li><strong>Do nothing</strong> — the will is still coherent.</li>
+  <li><strong>Rebuild</strong> (re‑prepare + re‑sign, <em>no on‑chain cost</em>) — the will changed but
+      nothing dangerous is committed yet.</li>
+  <li><strong>Invalidate on‑chain first</strong> (costs a real Bitcoin fee) — a previously
+      <strong>signed/sent</strong> transaction must be neutralised by spending its inputs <em>before</em> a
+      new will can safely replace it.</li>
+</ol>
+<blockquote>The whole point of rule 3 is safety: <strong>a will‑executor must never be able to broadcast an old
+transaction that would execute your inheritance too early.</strong></blockquote>
+
+<h2>2. Transaction states (status flags)</h2>
+<table>
+<thead><tr><th>Status</th><th>Meaning</th><th>Set when</th></tr></thead>
+<tbody>
+<tr><td><code>VALID</code></td><td>The current, usable plan</td><td>default; cleared by INVALIDATED/REPLACED/CONFIRMED/PENDING</td></tr>
+<tr><td><code>COMPLETE</code> (<em>Signed</em>)</td><td>The transaction has been <strong>signed</strong></td><td>after <strong>Sign</strong></td></tr>
+<tr><td><code>PUSHED</code></td><td>Signed tx <strong>sent to executor(s)</strong></td><td>after <strong>Broadcast</strong> to executors</td></tr>
+<tr><td><code>CHECKED</code></td><td>Executor <strong>confirmed</strong> it holds the tx</td><td>after a successful server <strong>Check</strong> (implies PUSHED)</td></tr>
+<tr><td><code>CHECK_FAIL</code></td><td>Server <strong>check failed</strong></td><td>a queried executor did not return the tx</td></tr>
+<tr><td><code>PUSH_FAIL</code></td><td>Sending to the executor failed</td><td>cleared when PUSHED becomes true</td></tr>
+<tr><td><code>CONFIRMED</code></td><td>Tx <strong>mined on‑chain</strong></td><td>seen on‑chain, height &gt; 0</td></tr>
+<tr><td><code>PENDING</code></td><td>Tx <strong>in the mempool</strong></td><td>seen on‑chain, height 0</td></tr>
+<tr><td><code>INVALIDATED</code></td><td>Inputs spent → can never confirm</td><td>invalidation tx / inputs gone</td></tr>
+<tr><td><code>REPLACED</code></td><td>Superseded by an earlier‑locktime child</td><td>a replacing child found</td></tr>
+<tr><td><code>EXPIRED</code></td><td>Locktime already in the past vs the check date</td><td><code>check_will_expired</code></td></tr>
+</tbody>
+</table>
+
+<h3>Safety rules baked into <code>set_status</code></h3>
+<ul>
+  <li>Setting <code>INVALIDATED</code> / <code>REPLACED</code> / <code>CONFIRMED</code> / <code>PENDING</code> → clears <code>VALID</code>.</li>
+  <li>Setting <code>CONFIRMED</code> / <code>PENDING</code> → clears <code>INVALIDATED</code>.</li>
+  <li>Setting <code>PUSHED</code> → clears <code>PUSH_FAIL</code> <strong>and</strong> <code>CHECK_FAIL</code>.</li>
+  <li>Setting <code>CHECKED</code> → implies <code>PUSHED</code>.</li>
+</ul>
+
+<h3>How states map to row colour</h3>
+<table>
+<thead><tr><th>State (first match wins)</th><th>Colour</th><th>Hex</th></tr></thead>
+<tbody>
+<tr><td><code>CHECK_FAIL</code></td><td><span class="pill red">red</span></td><td><code>#e83845</code></td></tr>
+<tr><td><code>INVALIDATED</code> / <code>REPLACED</code></td><td><span class="pill grey">grey</span></td><td>muted</td></tr>
+<tr><td><code>CONFIRMED</code></td><td><span class="pill green">green</span></td><td>confirmed</td></tr>
+<tr><td><code>COMPLETE</code> (signed, not pushed)</td><td><span class="pill blue">blue</span></td><td><code>#2bc8ed</code></td></tr>
+<tr><td><code>VALID</code> (prepared, not signed)</td><td>default</td><td>—</td></tr>
+</tbody>
+</table>
+<blockquote><strong>v0.3.3 fix:</strong> a will that is <em>signed but not yet broadcast</em>
+(<code>COMPLETE</code> and <strong>not</strong> <code>PUSHED</code>) is <strong>not</strong> queried on the
+server, so it stays <strong>blue</strong> instead of turning red. Only <code>PUSHED</code> wills are checked.</blockquote>
+
+<h2>3. The decision flow</h2>
+<p>On <strong>Prepare</strong> (or the periodic <strong>Check</strong>, or on Electrum close) BAL runs
+<code>is_will_valid</code>, raises a specific exception, and each maps to one action:</p>
+
+<pre class="mermaid">
+flowchart TD
+    A([You change something &amp; press Prepare / Check]) --> B{Heirs defined?}
+    B -- No --> Z1[/Show: Heirs are not defined — stop/]
+    B -- Yes --> C{Check-Alive threshold in the future?}
+    C -- "No, it's in the past" --> INV1[[Invalidate on-chain<br/>CheckAliveError]]
+    C -- Yes --> D{Any VALID tx with locktime earlier than the new date?}
+
+    D -- "Yes you moved the date EARLIER / anticipate" --> E{Was that tx already signed or sent?}
+    E -- "Not signed yet" --> R1[[Rebuild only<br/>no on-chain cost]]
+    E -- "Signed / sent" --> INV2[[Invalidate on-chain FIRST<br/>WillExpired]]
+
+    D -- No --> F{Will-executor / fee / heirs unchanged?}
+    F -- "Fee changed" --> R2[[Rebuild<br/>TxFeesChanged]]
+    F -- "Will-executor changed/absent" --> R3[[Rebuild<br/>WillExecutorNotPresent / Change]]
+    F -- "Heir added/removed, % or address changed" --> G{POSTPONE of an already signed/sent tx?}
+
+    G -- "Yes date later + signed/sent" --> INV3[[Invalidate on-chain FIRST then rebuild<br/>WillPostponed]]
+    G -- "No never signed, or pure heir/% change" --> R4[[Rebuild only<br/>HeirNotFound / HeirChange]]
+
+    F -- "Nothing changed" --> OK([Will still coherent — do nothing])
+
+    R1 --> SIGN
+    R2 --> SIGN
+    R3 --> SIGN
+    R4 --> SIGN
+    SIGN([Re-sign the new transactions]) --> PUSH([Broadcast to will-executors])
+
+    INV1 --> SB
+    INV2 --> SB
+    INV3 --> SB
+    SB([Sign &amp; broadcast the INVALIDATION tx on-chain]) --> WAIT{Invalidation confirmed?}
+    WAIT -- Yes --> REBUILD([Press Prepare again → build the new will])
+    REBUILD --> SIGN
+</pre>
+
+<h2>4. Every option, explained</h2>
+
+<h3>4.1 Changing the Check‑Alive date / heir locktime</h3>
+<p>BAL compares the <strong>requested</strong> locktime against the locktime <strong>frozen inside the
+already‑signed transaction</strong> (<code>w.tx.locktime</code>) — exactly what the will‑executors hold.</p>
+<table>
+<thead><tr><th>You do…</th><th>Tx already signed/sent?</th><th>Result</th><th>On‑chain fee?</th></tr></thead>
+<tbody>
+<tr><td>Move date <strong>LATER</strong> (postpone)</td><td>No (never signed)</td><td>Plain <strong>rebuild</strong></td><td class="no">No</td></tr>
+<tr><td>Move date <strong>LATER</strong> (postpone)</td><td>Yes</td><td><strong>Invalidate first</strong>, then rebuild (WillPostponed)</td><td class="fee">Yes</td></tr>
+<tr><td>Move date <strong>EARLIER</strong> (anticipate)</td><td>any</td><td>Old tx <strong>expired</strong> → invalidate (WillExpired)</td><td class="fee">Yes</td></tr>
+<tr><td>Check‑Alive threshold already passed</td><td>—</td><td><strong>Invalidate</strong> (CheckAliveError)</td><td class="fee">Yes</td></tr>
+</tbody>
+</table>
+<blockquote><strong>Why postpone needs on‑chain invalidation:</strong> the executor still holds the <em>old</em>
+transaction with the <em>earlier</em> locktime. Spending its inputs on‑chain makes it un‑minable, so it can
+never execute the inheritance early. The plugin tells you this and offers to build the invalidation tx.</blockquote>
+
+<h3>4.2 Adding an heir</h3>
+<p>An heir present in your set but not yet in the will raises <code>HeirNotFoundException</code>.</p>
+<ul><li><strong>Result:</strong> rebuild.</li>
+<li><strong>On‑chain fee:</strong> <span class="no">No</span> — unless the changed will was already signed/sent
+and the change also moves a locktime later (then 4.1 applies).</li></ul>
+
+<h3>4.3 Removing an heir</h3>
+<p>The will still carries an heir no longer in your set → <code>HeirNotFoundException</code> (removed‑heir branch).</p>
+<ul><li><strong>Result:</strong> rebuild, so the removed heir disappears.</li>
+<li><strong>On‑chain fee:</strong> <span class="no">No</span> for a prepared‑only will; if it was signed/sent,
+invalidate on‑chain first, then rebuild.</li></ul>
+<blockquote><strong>v0.3.2 fix:</strong> removing an heir is now detected on <strong>Check</strong> and on
+Electrum <strong>close</strong>, not only on Prepare.</blockquote>
+
+<h3>4.4 Changing an heir's percentage or address</h3>
+<p>A changed <code>[address, amount]</code> is treated like an heir change (<code>HeirChange</code> / <code>HeirNotFound</code>).</p>
+<ul><li><strong>Result:</strong> rebuild with new amounts.</li>
+<li><strong>On‑chain fee:</strong> <span class="no">No</span> (unless signed/sent → invalidate first).</li></ul>
+<blockquote>The wallet is always <strong>fully emptied</strong> by the inheritance; amounts must add up, or an
+<code>AmountException</code> warns you to adjust.</blockquote>
+
+<h3>4.5 Changing the transaction fee (sat/byte)</h3>
+<p>A different rate raises <code>TxFeesChangedException</code>.</p>
+<ul><li><strong>Result:</strong> rebuild at the new fee rate.</li>
+<li><strong>On‑chain fee:</strong> <span class="no">No</span> to rebuild (you pay only when broadcasting on‑chain).</li></ul>
+
+<h3>4.6 Changing or removing a will‑executor</h3>
+<ul>
+<li>Selected executor not referenced → <code>WillExecutorNotPresent</code>.</li>
+<li>Executor details changed → <code>WillexecutorChangeException</code>.</li>
+<li>“No executor” mode without a backup tx → <code>NoWillExecutorNotPresent</code>.</li>
+</ul>
+<ul><li><strong>Result:</strong> rebuild &amp; redistribute to the new executor set.</li>
+<li><strong>On‑chain fee:</strong> <span class="no">No</span> to rebuild.</li></ul>
+
+<h3>4.7 Nothing changed</h3>
+<p>If heirs, percentages, fees, executors and locktimes all still match the signed transactions,
+<code>is_will_valid</code> returns <code>True</code> and <strong>nothing happens</strong>.</p>
+
+<h2>5. What happens on the will‑executor servers</h2>
+<table>
+<thead><tr><th>Your action</th><th>Effect on the servers</th></tr></thead>
+<tbody>
+<tr><td><strong>Prepare</strong> (rebuild)</td><td>Nothing yet — new txs are local until Sign + Broadcast.</td></tr>
+<tr><td><strong>Sign</strong></td><td>Still local; tx becomes <code>COMPLETE</code> (<span class="pill blue">blue</span>).</td></tr>
+<tr><td><strong>Broadcast to executors</strong></td><td>Signed txs uploaded; items become <code>PUSHED</code>.</td></tr>
+<tr><td><strong>Check</strong></td><td>Each <code>PUSHED</code> will is queried; success → <code>CHECKED</code> (<span class="pill green">green</span>), failure → <code>CHECK_FAIL</code> (<span class="pill red">red</span>).</td></tr>
+<tr><td><strong>Invalidate (on‑chain)</strong></td><td>You spend the committed inputs on the network. Once confirmed, the executor's stored tx can no longer be mined and is dropped on the next check.</td></tr>
+<tr><td><strong>Re‑broadcast a new will</strong></td><td>Executors replace the obsolete copy with the new signed tx.</td></tr>
+</tbody>
+</table>
+<blockquote>A row turning <span class="pill red">red</span> (<code>CHECK_FAIL</code>) after a Check means an
+executor that <em>should</em> hold your tx did not return it — re‑Broadcast or rebuild. A merely
+<span class="pill blue">blue</span> row is signed‑but‑not‑yet‑sent and perfectly normal.</blockquote>
+
+<h2>6. Quick reference — does it cost a Bitcoin fee?</h2>
+<table>
+<thead><tr><th>Change</th><th>Rebuild?</th><th>On‑chain invalidation (real fee)?</th></tr></thead>
+<tbody>
+<tr><td>Add heir (only prepared)</td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Remove heir (only prepared)</td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Change % / address (only prepared)</td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Change fee rate</td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Change / remove will‑executor</td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Move date <strong>earlier</strong> (anticipate)</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
+<tr><td>Move date <strong>later</strong> — will <strong>signed/sent</strong></td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
+<tr><td>Move date <strong>later</strong> — will <strong>only prepared</strong></td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Check‑Alive threshold already passed</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
+<tr><td>Any change to an <strong>already signed/sent</strong> will</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
+<tr><td>Nothing changed</td><td class="no">No</td><td class="no">No</td></tr>
+</tbody>
+</table>
+
+<h2>7. Golden rules</h2>
+<ol>
+<li><strong>Before it's signed</strong>, changing anything is free — just <strong>Prepare</strong> again.</li>
+<li><strong>After it's signed/sent</strong>, moving the date or replacing it requires an <strong>on‑chain
+    invalidation first</strong> (a small Bitcoin fee) so an old transaction can never execute early.</li>
+<li>Always finish with <strong>Sign → Broadcast → Check</strong> so executors hold the current plan (green).</li>
+<li>The wallet is always <strong>fully emptied</strong> by the inheritance, so heir amounts must add up.</li>
+</ol>
+
+<footer>This document reflects BAL plugin v0.3.3. Behaviour is derived directly from
+<code>core/will.py</code> and <code>gui/qt/window.py</code>.</footer>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+</script>
+</body>
+</html>

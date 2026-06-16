@@ -668,3 +668,24 @@ render before/after mock-ups for visual approval.
   star-import re-exports, one F841, one F541) — no new issues.
 - Version bumped to **0.3.3** (`bal/VERSION`, `bal/__init__.py`,
   `bal/manifest.json`).
+
+## 18. Documentation site (docs/) — no behaviour change
+
+Added a `docs/` tree that renders directly on GitHub and GitHub Pages (no PDF):
+
+- `docs/inheritance-options.md` + `.html`: a code‑accurate **Inheritance Options
+  Guide** covering every change a user can make (date earlier/later, add/remove
+  heir, change percentages, fees, will‑executors), each transaction status flag
+  and its colour, and what happens on the will‑executor servers. Includes a
+  decision **flow chart** (GitHub‑native Mermaid block in the `.md`, plus a
+  static SVG fallback `docs/images/inheritance-flow.svg`, plus a live Mermaid
+  render in the `.html`). Behaviour is derived directly from
+  `core/will.py::is_will_valid` / `check_willexecutors_and_heirs` and
+  `gui/qt/window.py::build_inheritance_transaction`.
+- `docs/manual/README.md` + `manual.html` + `images/`: the official **BAL User
+  Manual (revB)** converted from the upstream Gitea PDF into GitHub‑friendly
+  Markdown/HTML with the original screenshots re‑rendered at high resolution
+  (`docs/manual/images/fig*.png`, `logo.png`).
+- `docs/README.md`: documentation index linking both documents.
+
+No plugin code changed; 186 tests still pass.
