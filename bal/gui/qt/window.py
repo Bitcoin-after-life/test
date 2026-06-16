@@ -574,10 +574,15 @@ class BalWindow:
                 _logger.info("build will")
                 self.build_will(ignore_duplicate, keep_original)
 
+                # Track whether the rebuild produced a coherent, ready-to-sign
+                # will, so we can guide the user through the remaining manual
+                # steps (Sign + Broadcast) afterwards.
+                rebuilt_ok = False
                 try:
                     self.check_will()
                     for wid, _w in self.willitems.items():
                         self.wallet.set_label(wid, "BAL Transaction")
+                    rebuilt_ok = True
                 except WillExpiredException as e:
                     self.invalidate_will()
                 except NotCompleteWillException as e:
@@ -590,6 +595,31 @@ class BalWindow:
 
                 self.window.history_list.update()
                 self.window.utxo_list.update()
+
+                # Guide the user: the inheritance was just (re)built and is now
+                # in the "New" state, so it must be SIGNED and then BROADCAST
+                # again -- two manual steps the user has to perform.  Without
+                # this hint the user is left with a freshly rebuilt will and no
+                # indication that it still needs to be signed and re-sent to the
+                # will-executors.
+                if rebuilt_ok:
+                    if self.no_willexecutor:
+                        next_steps = _(
+                            "Your inheritance has been rebuilt and now needs "
+                            "to be signed again.\n\n"
+                            "Next step (manual):\n"
+                            "  1. Press 'Sign' to sign the new transaction."
+                        )
+                    else:
+                        next_steps = _(
+                            "Your inheritance has been rebuilt and now needs "
+                            "to be signed and re-sent to the will-executors.\n\n"
+                            "Next steps (manual):\n"
+                            "  1. Press 'Sign' to sign the new transaction.\n"
+                            "  2. Press 'Broadcast' to send it to the "
+                            "will-executors."
+                        )
+                    self.show_message(next_steps)
             self.update_all()
             return self.willitems
         except Exception as e:

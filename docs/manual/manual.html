@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>BAL Protocol 1.0 — User Manual (revB)</title>
+<style>
+  :root{ --accent:#e8830c; --link:#1a73c0; --text:#222; --muted:#666; --border:#e2e2e2; --bg:#fff; --soft:#faf7f2; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:17px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:920px;margin:0 auto;padding:28px 22px 90px}
+  h1{font-size:2rem;text-align:center;margin:.2em 0}
+  h2{font-size:1.5rem;margin:2em 0 .4em;border-bottom:2px solid var(--accent);padding-bottom:.25em;color:#b3660a}
+  h3{font-size:1.2rem;margin:1.6em 0 .3em}
+  h4{font-size:1.05rem;margin:1.2em 0 .2em;color:var(--muted)}
+  p,li{color:var(--text)}
+  a{color:var(--link)}
+  img{max-width:100%;height:auto;display:block;margin:1em auto;border:1px solid var(--border);
+    border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.08)}
+  em{color:var(--muted)}
+  blockquote{margin:1em 0;padding:.7em 1.1em;border-left:4px solid var(--accent);
+    background:var(--soft);border-radius:0 8px 8px 0}
+  blockquote strong{color:#b3660a}
+  code{background:#f3f3f3;padding:.1em .4em;border-radius:5px;font-size:.92em}
+  table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:.96rem;display:block;overflow-x:auto}
+  th,td{border:1px solid var(--border);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--soft)}
+  tr:nth-child(even) td{background:#fcfcfc}
+  hr{border:0;border-top:1px solid var(--border);margin:2.2em 0}
+  .logo{display:block;margin:8px auto 0;width:120px}
+  .subtitle{text-align:center;color:var(--muted);margin-top:-.2em}
+  footer{margin-top:3em;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);padding-top:1em}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p align="center">
+  <img src="./images/logo.png" alt="BitcoinAfter.Life logo" width="120" />
+</p>
+
+<h1 align="center">BitcoinAfter.Life — BAL PROTOCOL 1.0</h1>
+<h3 align="center">USER MANUAL (revB)</h3>
+
+<blockquote>
+<p>This is the GitHub‑friendly (HTML/Markdown + images) edition of the official
+BAL user manual. The original PDF lives in the
+<a href="https://bitcoin-after.life/gitea/bitcoinafterlife/bal_plugin_manual">bal_plugin_manual</a>
+Gitea repository. A styled single‑page version is available as
+<a href="./manual.html"><code>manual.html</code></a>.</p>
+</blockquote>
+<hr />
+<p>Welcome to using <strong>BAL</strong>, the open‑source plugin for Electrum Wallet, dedicated
+to managing <strong>bitcoin digital inheritance</strong>.</p>
+<p>An open‑source plugin is a software extension that adds functionality to an
+existing program, and whose source code is publicly available. This means that
+anyone can view, modify, and distribute the plugin code.</p>
+<p>The plugin was designed for <strong>Electrum</strong>, the Gold standard of Bitcoin wallets.</p>
+<p>It was not considered reasonable to proceed with the development of a new wallet
+or a fork of a wallet (a bifurcation of Electrum's code) so as not to put funds
+at risk. Instead, we thought it prudent to lean as a plugin on the most tested
+and therefore secure open‑source Bitcoin wallet (<strong>Electrum</strong>), trusting that in
+the future the plugin will be placed directly on Electrum by default.</p>
+<h2 id="installing-the-bal-plugin">Installing the BAL plugin</h2>
+<p>The steps for installing the BAL plugin are very simple:</p>
+<ol>
+<li>Install the latest version of <strong>Electrum</strong> (Bitcoin wallet).</li>
+<li>Install the <strong>BAL plugin</strong> (find the files on the Bitcoin‑after.life site or
+   links on the Bitcointalk forum), copying it to the Electrum plugins folder.</li>
+<li>Activate the plugin from the Electrum menu (<strong>Tools → Plugins → BAL</strong>).</li>
+<li><strong>Restart Electrum.</strong></li>
+</ol>
+<p>Now you are ready to leave your digital legacy to your heirs!</p>
+<hr />
+<h2 id="the-bal-interface">The BAL interface</h2>
+<p><img alt="Figure 1 — Electrum with the BAL plugin installed" src="./images/fig1.png" /></p>
+<p><em>Figure 1 — the screen that appears after starting Electrum with the BAL plugin
+installed.</em></p>
+<p>As you can see there are now two new tabs (<strong>HEIRS</strong> and <strong>WILL</strong>) on the
+Electrum interface.</p>
+<ul>
+<li><strong>HEIRS</strong> = the screen of heirs to whom you want to leave your inheritance.</li>
+<li><strong>WILL</strong> = the screen that shows you the technical details of your inheritance:</li>
+<li>locktime</li>
+<li>creation time</li>
+<li>transaction fees for miners</li>
+<li>status</li>
+<li>heirs</li>
+<li>will‑executor with associated fees</li>
+</ul>
+<blockquote>
+<p><strong>NB:</strong> Inheritance with the BAL plugin can also be set on a wallet that is
+still receiving incoming transactions not yet confirmed on the blockchain.</p>
+</blockquote>
+<hr />
+<h2 id="the-heirs-parameters">The HEIRS parameters</h2>
+<p>You can leave the default plugin parameters; they are more than fine for 99 % of
+inheritance cases.</p>
+<p><img alt="Figure 2 — HEIRS tab parameters" src="./images/fig2.png" /></p>
+<p><em>Figure 2 — the parameters on the HEIRS tab: (1) Delivery Time, (2) Check Alive,
+(3) Fees.</em></p>
+<h3 id="1-delivery-time-locktime">1 — Delivery Time (Locktime)</h3>
+<p>Indicates the date on which the inheritance of your wallet on the blockchain
+will be transferred to the recipient. You can enter the inheritance date either
+as <strong>Relative</strong> (example: 1 year from today → <code>RAW = 1y</code>) or as a <strong>Precise
+Date</strong> (<code>Date</code>).</p>
+<p>If you choose <strong>Raw</strong>, you can insert various options based on a suffix:</p>
+<ul>
+<li><code>d</code>: number of days after the current day (e.g. <code>1d</code> means tomorrow)</li>
+<li><code>y</code>: number of years after the current day (e.g. <code>1y</code> means one year from today)</li>
+</ul>
+<p>* The locktime can be <strong>anticipated</strong> to update the will.</p>
+<h3 id="2-check-alive-threshold">2 — Check Alive (Threshold)</h3>
+<p><em>(i.e. check whether you are still alive, and then postpone the inheritance.)</em></p>
+<p>This parameter — settable as relative (<code>RAW</code>) or absolute (<code>DATE</code>) — indicates
+the time by which the inheritance will <strong>not</strong> be changed by postponing it.</p>
+<blockquote>
+<p><strong>NB:</strong> if you set it negative (i.e. back in time) it is as if it were not
+there. This can be useful for doing quick inheritance tests.</p>
+</blockquote>
+<p><strong>Example:</strong> if you set the inheritance to one year from today and the Check
+Alive (threshold) parameter to 6 months, then in 8 months — if you open
+Electrum — the BAL plugin will ask whether you want to update the inheritance
+date.</p>
+<p><strong>Why does it do this?</strong> Because it assumes that if you open the Electrum wallet
+with the plugin, you are still alive, and therefore estimates that you will
+still live a certain amount of time, so you probably want to postpone the
+inheritance so as not to transfer it too soon while you are still alive.</p>
+<h4 id="a-practical-example">A practical example</h4>
+<p>Today is <strong>January 1, 2025</strong>. I set the inheritance for <strong>December 1, 2025</strong>
+(11 months from now) and the Check‑Alive (threshold) at <strong>6 months</strong> (so
+<strong>June 1, 2025</strong>):</p>
+<p><strong>Future case histories:</strong></p>
+<ul>
+<li><strong>Case 1</strong> — I no longer access the Electrum wallet: the inheritance on
+  December 1, 2025 will be transferred to the heir (sent to Bitcoin nodes by the
+  will‑executors).</li>
+<li><strong>Case 2</strong> — I access the wallet in 4 months (earlier than the set 6‑month
+  Check‑Alive threshold); the inheritance will remain set for December 1, 2025.</li>
+<li><strong>Case 3</strong> — I access the wallet in 7 months (later than the 6 months set);
+  the plugin will ask whether I want to <strong>postpone</strong> the date of the inheritance,
+  because it assumes I am still alive and may want to postpone the inheritance so
+  as not to transfer it while I am still alive.</li>
+</ul>
+<h3 id="3-fees">3 — Fees</h3>
+<p>Denoted in <strong>satoshi/vbyte</strong>. This parameter indicates the fees that go to the
+<strong>miners</strong> to have the transaction validated on the blockchain at the time of
+inheritance. It is the classic fee/commission you pay every time you send
+bitcoin to another wallet.</p>
+<p>We recommend leaving the default value of <strong>100 sat/vbyte</strong>; this way you will be
+sure the inheritance is accepted by the miners, even on days when the blockchain
+is saturated and network costs are high. (As of January 2025, that is roughly
+$25 USD for a wallet without too many UTXOs — a value that allows the tx to be
+placed on the blockchain even on congested days.)</p>
+<hr />
+<h2 id="important-sizing-inheritance-transaction-amounts">IMPORTANT — sizing inheritance transaction amounts</h2>
+<p><strong>Automatic sizing to 100 % of the wallet.</strong> The plugin always makes sure that
+<strong>ALL</strong> the value of the wallet is delivered to the heirs.</p>
+<ul>
+<li><strong>Example:</strong> I have a wallet with 3 BTC. I write as inheritance 1 BTC to JONNY
+  and 10 % to ANDREA. The BAL plugin sends 1 BTC to Jonny and <strong>all the rest</strong>
+  (2 BTC) to Andrea.</li>
+<li>Or: I set 5 % to Jonny and 80 % to Andrea. The plugin <strong>recalculates</strong> the
+  percentages proportionally so the wallet is completely emptied. Instead of
+  5 %/80 % it sends <strong>5.9 %</strong> to Jonny and <strong>94.1 %</strong> to Andrea, for a total of
+  100 %. (Otherwise 15 % would be left in the wallet.)</li>
+</ul>
+<blockquote>
+<p><strong>NB:</strong> if you wanted to send only 80 % of the wallet to the heirs and make
+20 % inaccessible forever (bitcoins lost forever — increasing digital scarcity
+and giving wealth to all bitcoin participants), just set <strong>yourself</strong> as an
+heir with a percentage (e.g. 20 %) to an internal wallet address. This also
+improves the privacy of the transaction, as it is difficult to understand the
+destination wallets.</p>
+</blockquote>
+<ul>
+<li><strong>Another example:</strong> I own 10 BTC and want to give Jonny exactly 4 BTC and
+  Andrea exactly 2 BTC. What about the missing 4? The plugin recalculates to
+  transfer 100 %. The only way to give Jonny and Andrea the exact BTC is to
+  transfer the missing 4 to another wallet by designating a <strong>third heir</strong>.</li>
+</ul>
+<hr />
+<h2 id="staggered-inheritance-over-time">Staggered inheritance over time</h2>
+<p>Currently <strong>BAL version 1.0</strong> does not support this. It is already in development
+for <strong>version 2</strong> of the protocol. In version 2 it will be possible, for
+example, to stagger the inheritance 10 % per year until the tenth year, or even
+1 % per month, month by month for 10 years — as if it were a kind of annuity,
+but without the need for third parties or intermediaries.</p>
+<hr />
+<h2 id="the-new-heir-button">The [NEW HEIR] button</h2>
+<p>After setting steps 1, 2, 3, press the <strong>[New Heir]</strong> button and the <em>BAL New
+Heirs</em> window appears:</p>
+<p><img alt="Figure 3 — New Heir window" src="./images/fig3.png" /></p>
+<p><em>Figure 3 — adding a new heir.</em></p>
+<p>Here you enter the following parameters:</p>
+<ul>
+<li><strong>Name:</strong> name of the heir, with any details you prefer.</li>
+<li><strong>Address:</strong> the Bitcoin wallet address where the inheritance will be sent.</li>
+<li><strong>Amount:</strong> how much you want to send to this heir (as a <strong>percentage</strong> or a
+  <strong>fixed value</strong>). The plugin always makes sure that 100 % of the inheritance
+  is given to the heirs (see <em>Sizing inheritance transactions</em>).</li>
+</ul>
+<blockquote>
+<p><strong>NB:</strong> You can add several heirs — even 10 or more.</p>
+</blockquote>
+<hr />
+<h2 id="delivery-time-changes">Delivery time changes</h2>
+<p>If you change the <strong>Delivery Time</strong> of a will, when Electrum closes the BAL
+plugin will notify you that you need to update the inheritance.</p>
+<ul>
+<li><strong>If you postponed the Delivery Time:</strong> the plugin will create a transaction to
+  <strong>invalidate</strong> the current inheritance and create a new, postponed one. To do
+  this safely, the BAL plugin creates a transaction that it sends to the miners,
+  which you will have to <strong>sign</strong>, costing <strong>100 sat/vbyte</strong>.</li>
+<li><strong>If you anticipated the Delivery Time:</strong> the plugin simply sends a new
+  inheritance transaction to the <strong>Will‑Executor servers</strong>, which anticipates and
+  thus invalidates the transactions already sent to them.</li>
+</ul>
+<blockquote>
+<p>👉 For a complete, code‑accurate breakdown of every change (add/remove heir,
+change percentages, fee, executor, date earlier/later) and whether it costs an
+on‑chain fee, see the companion
+<a href="../inheritance-options.md"><strong>Inheritance Options Guide</strong></a>.</p>
+</blockquote>
+<hr />
+<h2 id="raw-settings">RAW settings</h2>
+<p>If you set, for example, <code>RAW‑1d</code> and it is, say, 5 p.m., the plugin will not
+execute the inheritance precisely 24 hours later (5 p.m. the next day) but will
+roughly estimate the blockchain block number corresponding to that time — so
+with a tolerance of a few hours.</p>
+<blockquote>
+<p><strong>NB:</strong> Inheritance is executed on nodes, on average, with a tolerance of about
+1 hour after the date/time set in the BAL plugin (because of the 11‑block
+Bitcoin median).</p>
+</blockquote>
+<hr />
+<h2 id="heirs-sheet-quick-test-tip">Heirs sheet — quick test tip</h2>
+<p>If you want a quick test run, enter an upcoming legacy date/time (e.g. 18 hours
+later). For such short intervals the <strong>Check Alive</strong> could create problems, so
+set the Check Alive parameter <strong>in the past</strong> (a date before today) — e.g. a
+previous month.</p>
+<hr />
+<h2 id="practical-example-multiple-dates">Practical example — multiple dates</h2>
+<p>I have 2 children, <strong>Peter</strong> (12) and <strong>Arnold</strong> (16). I own 10 BTC and want
+each to receive 5 BTC on their respective 18th birthdays.</p>
+<p>In the current BAL plugin (1.0) it is <strong>not</strong> possible to set different delivery
+dates — the inheritance date is unique. So in this case I prepare <strong>two wallets</strong>
+of 5 BTC each and set the respective inheritance with the BAL plugin. Electrum
+helps here, as it lets you easily create and manage multiple wallets.</p>
+<hr />
+<h2 id="bal-plugin-parameters">BAL plugin parameters</h2>
+<p>Accessible from the menu <strong>Tools → Plugins</strong>.</p>
+<h3 id="backup-transaction">Backup Transaction</h3>
+<p><img alt="Figure 4 — Backup Transaction parameter" src="./images/fig4.png" /></p>
+<p><em>Figure 4 — the Backup Transaction option (default: Disabled).</em></p>
+<p><strong>Backup Transaction</strong> (default <em>Disabled</em>) is used to manage the inheritance
+transaction (locktime tx) even <strong>without</strong> the BAL plugin automations that rely
+on the online Will‑Executor servers.</p>
+<p>By enabling this option you also keep an <strong>offline backup</strong> of the signed legacy
+transaction, useful in case all online Will‑Executor servers are destroyed (a
+highly unrealistic event).</p>
+<p>The backup transaction is saved locally — on a USB stick or wherever you prefer.
+For example, it can be delivered through a notary, trusted persons, or even
+directly to the heir. (In the latter case, however, the heir becomes aware that
+they will receive an inheritance on a specific date and amount, which could be
+imprudent.)</p>
+<p>The backup transaction, once delivered to the heir, can — at a later date than
+the inheritance delivery time — be sent to the nodes via Electrum to receive the
+funds in the inheritance wallet.</p>
+<p><strong>Difficulties and risks of using only the backup transaction</strong> (versus trusting
+the automation of Will‑Executor servers):</p>
+<ol>
+<li>Risk of the transaction being <strong>invalidated</strong> later if you accidentally spend
+   even one satoshi from one of the wallets you pre‑signed the legacy transaction
+   from.</li>
+<li>Difficulty delivering the signed transaction to the heir (the heir would learn
+   about the inheritance and its value).</li>
+<li>Each step must be handled by hand, with the risk of errors.</li>
+</ol>
+<p>If you activated <em>Backup Transactions</em> in the parameters, this is visible in the
+<strong>[WILL]</strong> screen with the status <strong>NONE</strong> in the Will‑Executor column:</p>
+<p><img alt="Figure 5 — Backup transaction in the WILL screen" src="./images/fig5.png" /></p>
+<p><em>Figure 5 — backup transaction shown with "NONE" will‑executor.</em></p>
+<p>Then, by right‑clicking it and selecting <strong>[Details]</strong>, the following screen
+appears, where you can save your transaction to your preferred medium (USB flash
+drive, cloud, NAS, etc.):</p>
+<p><img alt="Figure 6 — Transaction details" src="./images/fig6.png" /></p>
+<p><em>Figure 6 — transaction details / save dialog.</em></p>
+<hr />
+<h2 id="wallet-security-saving-your-will">Wallet security — saving your will</h2>
+<p>To keep a copy of your will, simply save the wallet from Electrum
+(<strong>File → Save Backup</strong>).</p>
+<p>If, for example, your notebook is stolen or breaks down, just install Electrum on
+a new computer together with the BAL plugin and open the previously saved wallet.</p>
+<blockquote>
+<p><strong>Remember</strong> to save (and not lose) your wallet <strong>password</strong> on Electrum, or
+you will no longer be able to access the inheritance data saved with the
+wallet. If you restore your wallet from <strong>SEED only</strong>, you will regain access
+to your bitcoin funds but <strong>lose the BAL inheritance data</strong> saved with the
+wallet file.</p>
+</blockquote>
+<p>You can also <strong>export the heir list</strong> to keep a printable copy of your
+inheritance:</p>
+<p><img alt="Figure 7 — Export the heir list" src="./images/fig7.png" /></p>
+<p><em>Figure 7 — exporting / printing the heir list.</em></p>
+<hr />
+<h2 id="willexecutor-service-list">Will‑Executor service list</h2>
+<p>This window opens from the Electrum menu, <strong>Tools → Will‑executor</strong>, and shows
+the official list of will‑executor servers.</p>
+<p>If you want to make changes — such as adding an additional will‑executor server —
+you can enter it manually or import a list of will‑executor servers (found on the
+bitcointalk.org forum or on the official BAL website).</p>
+<p><strong>Commands in the window:</strong></p>
+<ul>
+<li><strong>Ping:</strong> checks which servers in the list are online — a <strong>green dot</strong> means
+  active.</li>
+<li><strong>Import:</strong> imports a will‑executor list other than the default.</li>
+<li><strong>Export:</strong> exports the list of will‑executor servers in your plugin (useful to
+  move it to another Electrum + BAL installation).</li>
+<li><strong>Add:</strong> adds a will‑executor server manually.</li>
+</ul>
+<h3 id="list-columns">List columns</h3>
+<ol>
+<li><strong>URL</strong> — the URL address of the will‑executor.</li>
+<li><strong>Base Fee</strong> — the commission/reward for the will‑executor. This reward lets
+   the will‑executor cover the cost of keeping the server online. The
+   will‑executor earns the base fee <strong>only on the date of inheritance</strong>, and only
+   if it is the <strong>first</strong> to send the transaction to the nodes — which sets in
+   motion a competition among will‑executors to earn the base fee. <em>(Example: I
+   set up an inheritance that will happen in 4 years; in that case the
+   will‑executor will only earn the fee in 4 years.)</em></li>
+<li><strong>Info</strong> — server description or website link.</li>
+<li><strong>Default Address</strong> — the bitcoin wallet address where the base fee will be
+   sent.</li>
+<li><strong>S</strong> — server status. A <strong>green dot</strong> = server online.</li>
+</ol>
+<p><strong>Right‑click</strong> on a server line opens four sub‑commands:</p>
+<p><img alt="Figure 8 — Will‑executor right‑click menu" src="./images/fig8.png" /></p>
+<p><em>Figure 8 — the will‑executor context menu.</em></p>
+<ol>
+<li><strong>Select</strong> — right‑click the server, add the green check mark on the left, and
+   this will‑executor will be used in your inheritance.</li>
+<li><strong>Edit</strong> — edit the relevant column field.</li>
+<li><strong>Ping</strong> — verify that the server is online.</li>
+<li><strong>Delete</strong> — delete the server from the list.</li>
+</ol>
+<hr />
+<h2 id="privacy-of-online-willexecutors">Privacy of (online) will‑executors</h2>
+<p>Transactions sent to will‑executor servers (<em>pushed</em>) by the BAL plugin are
+stored on the servers. They are <strong>not</strong> publicly accessible (for privacy), but
+from your BAL plugin you can check at any time whether the transaction is
+properly stored on the servers: right‑click the inheritance transaction in the
+<strong>WILL</strong> tab and choose <strong>Check</strong>. The transaction will be tagged in the
+<strong>Status</strong> column as <strong>Checked</strong> if it is indeed online on the server.</p>
+<h3 id="will-tab-columns">WILL tab columns</h3>
+<p>a. <strong>Locktime</strong> — the date of inheritance.
+b. <strong>Txid</strong> — identification of the bitcoin transaction.
+c. <strong>Will‑Executor</strong> — address of the will‑executor.
+d. <strong>Status</strong> — see the table below.</p>
+<hr />
+<h2 id="colour-progression-of-transaction-statuses">Colour progression of transaction statuses</h2>
+<p>Transactions on the <strong>WILL</strong> page are coloured to conveniently display their
+<strong>status</strong> of progress. Below are the colour progression states your legacy
+transactions can have in the WILL tab, on each will‑executor that is online.</p>
+<h3 id="chromatic-progression-table">Chromatic progression table</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Status</th>
+<th>Meaning</th>
+<th>Colour</th>
+<th>HEX</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>New</strong></td>
+<td>TX new inheritance</td>
+<td>White (transparent)</td>
+<td><code>#FFFFFF</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Signed</strong></td>
+<td>TX inheritance signed into the wallet</td>
+<td>Azure</td>
+<td><code>#2BC8ED</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Pushed</strong></td>
+<td>TX sent to will‑executor</td>
+<td>Azure‑green</td>
+<td><code>#73F3C8</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Checked</strong></td>
+<td>TX actually present in the will‑executor</td>
+<td>Bright green</td>
+<td><code>#8AFA6C</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Confirmed</strong></td>
+<td>TX confirmed in the blockchain</td>
+<td>Gray</td>
+<td><code>#BFBFBF</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>Pending</strong></td>
+<td>TX awaiting confirmation on blockchain</td>
+<td>Yellow</td>
+<td><code>#FFCE30</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>Failed</strong></td>
+<td>Communication failure with will‑executor</td>
+<td>Red</td>
+<td><code>#E83845</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>Invalidated</strong></td>
+<td>UTXO input is no longer available</td>
+<td>Orange</td>
+<td><code>#F87838</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td><strong>Replaced</strong></td>
+<td>A backdated‑locktime transaction spends the same input</td>
+<td>Violet</td>
+<td><code>#FF97E9</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="will-tab-commands">WILL tab — commands</h2>
+<p><img alt="Figure 9 — WILL tab and Will‑Details window" src="./images/fig11.png" /></p>
+<p><em>Figure 9 — the WILL tab with its commands.</em></p>
+<ol>
+<li><strong>Prepare</strong> — prepares the inheritance and puts it on the list.</li>
+<li><strong>Sign</strong> — sign your legacy transaction with your private key (using your
+   wallet password or hardware key).</li>
+<li><strong>Broadcast</strong> — sends the inheritance transaction to the online Will‑Executor
+   servers on your <em>Will‑Executor Service List</em>.</li>
+<li><strong>Display</strong> — brings up the <em>Will‑Details</em> window, where you can see the
+   transactions with all available data:
+   - Locktime (date of inheritance)
+   - Creation time
+   - Transaction fee (to the miners)
+   - Status (see table)
+   - Heirs
+   - Will‑executor (server address)
+   - Commission (base fee) — reward for the will‑executor</li>
+</ol>
+<p><img alt="Figure 10 — Will‑Details window" src="./images/fig9.png" /></p>
+<p><em>Figure 10 — the Will‑Details window (Display).</em></p>
+<blockquote>
+<p><strong>NB:</strong> When you close Electrum, the plugin automatically proceeds to execute
+<strong>Prepare → Sign → Broadcast</strong> (if they have not already been completed) to
+ensure the inheritance is correctly executed.</p>
+</blockquote>
+<hr />
+<h2 id="using-hardware-keys">Using hardware keys</h2>
+<p><strong>Ledger, BitBox2, etc.</strong> — all hardware keys that are compatible with and
+recognised by Electrum are compatible with the BAL plugin.</p>
+<hr />
+<h2 id="insights-privacy">Insights (privacy)</h2>
+<h3 id="caution-consolidation-of-utxos">Caution: consolidation of UTXOs</h3>
+<p>When you send the entire contents of a wallet, you risk losing the privacy of
+your UTXOs. It may be a good rule of thumb to execute the inheritance leaving a
+small remainder to another wallet, to improve the privacy of the transaction —
+especially if there is only one heir.</p>
+<blockquote>
+<p><strong>Example:</strong> 99.7 % inheritance to the heir and 0.3 % to a random bitcoin
+address (e.g. taken randomly from a block explorer).</p>
+</blockquote>
+<hr />
+<h2 id="wallet-inheritance-behaviour-when-the-balance-utxo-changes">Wallet inheritance behaviour when the balance / UTXO changes</h2>
+<p>If your wallet managed with the BAL plugin changes in balance — e.g. you send
+additional funds or spend some — the inheritance <strong>must be updated</strong>.</p>
+<p>The BAL plugin takes care, when closing Electrum, to check whether there has been
+any such change (balance or UTXO) and then <strong>updates the inheritance
+automatically</strong>.</p>
+<p>Thanks to this you can use an <em>inheritance‑ready</em> wallet on Electrum even for
+everyday Bitcoin transactions (possibly with a hardware key to sign), knowing
+that in case of death the entire contents of the wallet will be sent to your
+heirs.</p>
+<p>If you use your <strong>read‑only</strong> wallet on devices other than your Electrum (using
+the public key <code>Zpub</code>/<code>Xpub</code>, e.g. to monitor funds remotely), any funds sent
+directly into the wallet <strong>will not</strong> be added to the inheritance already set up.
+To work around this, open your wallet on Electrum so the plugin can update the
+inheritance UTXOs and re‑send them to the will‑executors, updated with the new
+value.</p>
+<blockquote>
+<p>⚠️ <strong>WARNING:</strong> If you use the same <strong>SEED</strong> on multiple devices (a behaviour
+always strongly discouraged), spending even one transaction of even one satoshi
+<strong>invalidates</strong> the inheritance, because it changes the wallet's UTXO structure
+and therefore the nodes discard the inheritance transaction.</p>
+</blockquote>
+<hr />
+<p>About installing a will‑executor server or collaboration, send your request to:
+<strong>info@bitcoin-after.life</strong></p>
+<hr />
+<p align="right"><em>Signed,<br/>Svātantrya</em></p>
+</div>
+</body>
+</html>

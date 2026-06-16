@@ -61,6 +61,10 @@ class BalTxFeesWidget(QWidget):
         button.setStyleSheet("font-size: 16px;")
         layout.addWidget(button)
         layout.addWidget(self.txfee_widget)
+        # Expose the leading icon (prefix) and the editable field so the parent
+        # WillSettingsWidget can align them on a grid (see its vertical layout).
+        self.prefix_widget = button
+        self.field_widget = self.txfee_widget
 
     def doubleclick(self, event=None):
         pass
@@ -206,6 +210,9 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
             help_button.setToolTip(_(self.tooltip_text))
         #help_button.setStyleSheet("font-size: 155555);
         hbox.addWidget(help_button)
+        # Expose the leading icon (prefix) so the parent WillSettingsWidget can
+        # align all rows on a common left edge (see its vertical layout).
+        self.prefix_widget = help_button
         self.combo.currentIndexChanged.connect(self.on_current_index_changed)
 
         for w in self.editors:
@@ -558,10 +565,58 @@ class WillSettingsWidget(QWidget):
         w = self.widgets["baltx_fees"]
         if w not in bal_window.txfee_widgets:
             bal_window.txfee_widgets.append(w)
-        box.addWidget(self.widgets["locktime"])
-        box.addWidget(self.widgets["threshold"])
-        box.addWidget(self.calendar_button)
-        box.addWidget(self.widgets["baltx_fees"])
+        if layout_type == "h":
+            box.addWidget(self.widgets["locktime"])
+            box.addWidget(self.widgets["threshold"])
+            box.addWidget(self.calendar_button)
+            box.addWidget(self.widgets["baltx_fees"])
+        else:
+            # Vertical layout (the "Build your will" wizard): make every row the
+            # same width and left aligned so they all fit in one tidy block,
+            # instead of letting the calendar button and the fee field stretch to
+            # the dialog's right edge (which made them far wider than the date
+            # rows above).
+            #
+            # IMPORTANT: the leading icons keep their ORIGINAL size.  The icons
+            # are HelpButtons, which already pin themselves to a fixed width
+            # (2.2 * char_width_in_lineedit()); we must NOT widen them, otherwise
+            # they look oversized compared with the original toolbar layout.  We
+            # only need to (1) align the calendar row's left edge with the icons'
+            # original width and (2) cap every row to the date-row width.
+            locktime_w = self.widgets["locktime"]
+            threshold_w = self.widgets["threshold"]
+            fees_w = self.widgets["baltx_fees"]
+
+            # Original icon width (HelpButton's own fixed width); used only to
+            # offset the calendar button so its field starts under the others.
+            icon_w = locktime_w.prefix_widget.sizeHint().width()
+
+            # Common row width = natural width of the date rows (the reference).
+            row_w = max(
+                locktime_w.sizeHint().width(),
+                threshold_w.sizeHint().width(),
+            )
+            for w in (locktime_w, threshold_w, fees_w):
+                w.setFixedWidth(row_w)
+
+            # The calendar row has no prefix icon: wrap it so it starts with an
+            # empty spacer of the icon width (calendar field aligned with the
+            # date/fee fields) and cap it to the same total width as the rows
+            # above, so it no longer stretches to the dialog's right edge.
+            calendar_row = QWidget(self)
+            calendar_box = QHBoxLayout(calendar_row)
+            calendar_box.setContentsMargins(0, 0, 0, 0)
+            calendar_box.setSpacing(0)
+            calendar_spacer = QWidget()
+            calendar_spacer.setFixedWidth(icon_w)
+            calendar_box.addWidget(calendar_spacer)
+            calendar_box.addWidget(self.calendar_button)
+            calendar_row.setFixedWidth(row_w)
+
+            box.addWidget(locktime_w, alignment=Qt.AlignmentFlag.AlignLeft)
+            box.addWidget(threshold_w, alignment=Qt.AlignmentFlag.AlignLeft)
+            box.addWidget(calendar_row, alignment=Qt.AlignmentFlag.AlignLeft)
+            box.addWidget(fees_w, alignment=Qt.AlignmentFlag.AlignLeft)
 
         if self.read_only:
             self.widgets["locktime"].set_read_only(True)

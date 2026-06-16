@@ -88,17 +88,20 @@ class Will:
         """Return True if ``w`` should be queried on its will-executor server
         when the user presses Check (or on Electrum close).
 
-        A will needs a server check when it is VALID, has a will-executor
-        assigned, and is not yet CHECKED.  This intentionally includes wills
-        that are not (yet) marked PUSHED: a will that was actually sent in the
-        past but whose saved status still reads "New" would otherwise be
-        skipped, leaving the Server column stuck on "Not sent".  The server
-        response (see WillItem.set_check_willexecutor) then corrects the status
-        to PUSHED/CHECKED if the transaction is present, or CHECK_FAIL if not.
+        A will is queried only when it is VALID, has a will-executor assigned,
+        was actually PUSHED (sent), and is not yet CHECKED.  The ``PUSHED``
+        condition is essential: querying the server for a will that was *never*
+        sent would make the server (correctly) answer "I don't have this tx",
+        which ``WillItem.set_check_willexecutor`` then records as CHECK_FAIL.
+        A freshly signed-but-not-sent will would therefore turn red, even though
+        it is merely "signed, not sent" (which must stay blue / #2bc8ed, as in
+        the original BAL behaviour).  Restricting the check to PUSHED wills
+        matches the original ``check()`` logic and avoids that false failure.
         """
         return bool(
             w.get_status("VALID")
             and w.we
+            and w.get_status("PUSHED")
             and not w.get_status("CHECKED")
         )
 

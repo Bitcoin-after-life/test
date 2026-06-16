@@ -227,17 +227,22 @@ def test_check_heir_added_triggers_rebuild():
 
 
 def test_needs_server_check():
-    """Check button selection logic: a VALID will with a will-executor that is
-    not yet CHECKED must be queried on the server, even if it is not PUSHED
-    (regression for the 'New / Not sent' wills that Check ignored)."""
+    """Check button selection logic: only a VALID, PUSHED will with a
+    will-executor that is not yet CHECKED must be queried on the server.
+
+    A will that was never sent (not PUSHED) must NOT be queried: the server
+    would correctly answer "I don't have it", which would be recorded as
+    CHECK_FAIL and turn a merely signed-but-not-sent will red instead of leaving
+    it blue (#2bc8ed).  This matches the original BAL ``check()`` behaviour."""
     we = {"url": "https://we.example.com"}
 
-    # New (not PUSHED) but has a will-executor -> must be checked.
+    # New (not PUSHED) but has a will-executor -> must NOT be checked, otherwise
+    # a signed-but-not-sent will would falsely turn CHECK_FAIL (red).
     item_new = _make_willitem_blank()
     item_new.we = we
-    assert Will.needs_server_check(item_new) is True
+    assert Will.needs_server_check(item_new) is False
 
-    # PUSHED but not CHECKED -> must be checked (previous behaviour).
+    # PUSHED but not CHECKED -> must be checked.
     item_pushed = _make_willitem_blank()
     item_pushed.we = we
     item_pushed.set_status("PUSHED", True)

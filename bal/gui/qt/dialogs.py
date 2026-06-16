@@ -516,6 +516,9 @@ class BalBuildWillDialog(BalDialog):
         self.build_row = None
         self.sign_row = None
         self.push_row = None
+        # Manual next-steps hint (Sign / Broadcast) shown to the user after the
+        # dialog finishes; None when nothing is left to do.
+        self._next_steps_hint = None
         self.network = Network.get_instance()
         self._stopping = False
         self.thread = TaskThread(self)
@@ -541,7 +544,7 @@ class BalBuildWillDialog(BalDialog):
             return
         txs = None
         _logger.debug("close plugin phase 1 started")
-        varrow = self.msg_set_status("checking variables")
+        varrow = self.msg_set_status("Checking variables")
         try:
             self.bal_window.init_class_variables()
         except CheckAliveError as cae:
@@ -553,12 +556,12 @@ class BalBuildWillDialog(BalDialog):
                 _logger.debug(
                     "during phase1 CAE: {}, Continue to invalidate".format(cae)
                 )
-                self.msg_set_status("checking variables",varrow, "Check Alive Threshold Passed: you have to Invalidate your old Will",self.COLOR_ERROR)
+                self.msg_set_status("Checking variables",varrow, "Check Alive Threshold Passed: you have to Invalidate your old Will",self.COLOR_ERROR)
             else:
                 raise cae
             return None, tx
         except NoHeirsException:
-            self.msg_set_status("checking variables", varrow,"No Heirs",self.COLOR_ERROR)
+            self.msg_set_status("Checking variables", varrow,"No Heirs",self.COLOR_ERROR)
             #self.msg_set_checking("No Heirs")
             return False, None
         except Exception as e:
@@ -573,7 +576,7 @@ class BalBuildWillDialog(BalDialog):
                 self.bal_window.window.wallet.dust_threshold(),
             )
             _logger.debug("variables ok")
-            self.msg_set_status("checking variables:", varrow, "Ok", self.COLOR_OK)
+            self.msg_set_status("Checking variables", varrow, "Ok", self.COLOR_OK)
         except AmountException:
             self.msg_set_checking(
                 self.msg_warning(
@@ -937,7 +940,36 @@ class BalBuildWillDialog(BalDialog):
         self.thread.stop()
         self.bal_window.save_willitems()
         self.msg_edit_row(_("Finished"))
+        # Instead of auto-closing after a countdown, let the user decide when to
+        # dismiss the dialog: they can read the full "Building Will" report at
+        # their own pace and then press "Close".  This runs in the GUI thread
+        # (on_success callback) so building the button here is safe.
+        self._add_close_button()
+
+    def _add_close_button(self):
+        """Add a right-aligned "Close" button to dismiss the dialog manually.
+
+        Replaces the old automatic countdown (self.wait(5) + self.close()).
+        Guarded so it is only built once even if called again.
+        """
+        if getattr(self, "_close_button", None) is not None:
+            return
+        self._close_button = QPushButton(_("Close"))
+        self._close_button.clicked.connect(self._on_close_clicked)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(self._close_button)
+        self.vbox.addLayout(button_row)
+        self._close_button.setFocus()
+
+    def _on_close_clicked(self):
+        # Close the dialog first, then show the persistent popup guiding the
+        # user through any remaining MANUAL steps (Sign / Broadcast).  Showing
+        # the (modal) hint after close() mirrors the previous behaviour where
+        # the hint appeared once the auto-closing dialog was gone.
         self.close()
+        if self._next_steps_hint:
+            self.bal_window.show_message(self._next_steps_hint)
 
     def closeEvent(self, event):
         self._stopping = True
@@ -975,8 +1007,71 @@ class BalBuildWillDialog(BalDialog):
             except Exception as e:
                 # td = traceback.format_exc()
                 self.msg_set_pushing(self.msg_error(e))
-        self.msg_edit_row(self.msg_ok())
-        self.wait(5)
+        # Blank separator row: visually detach the final "All done" summary
+        # from the per-step result rows above it, so the closing line stands
+        # out as the overall outcome rather than just another step.
+        self.msg_edit_row("")
+        # Final summary row: the whole "Building Will" sequence above (check /
+        # sign / broadcast) finished without errors.  Give it an explicit
+        # left-side label ("All done") so this closing Ok is not an orphan
+        # result like the other rows have.
+        self.msg_edit_row("{}:\t{}".format(_("All done"), self.msg_ok()))
+
+        # Guide the user through any remaining MANUAL steps.  After the will is
+        # (re)built -- e.g. because an heir was removed/added from the Wizard --
+        # the new transactions may still need to be SIGNED and/or BROADCAST by
+        # the user.  This dialog only signs/pushes automatically when it already
+        # has the password and the will is in the right state; in every other
+        # case the user is otherwise left without any indication of what to do
+        # next.  We inspect the real status of the valid wills and tell the user
+        # exactly which buttons to press.
+        self._show_next_steps_hint()
+
+    def _show_next_steps_hint(self):
+        """Append a clear "what to do next" line to the Building Will dialog.
+
+        Pure UX guidance (no logic change): looks at the valid wills and, if any
+        still needs signing or broadcasting, tells the user to press 'Sign'
+        and/or 'Broadcast' manually.  The computed hint is also stored in
+        ``self._next_steps_hint`` so a persistent popup can be shown after the
+        dialog closes (this dialog auto-closes after a few seconds, which is too
+        short to be sure the user noticed the in-dialog line).
+        """
+        self._next_steps_hint = None
+        try:
+            need_sign = False
+            need_push = False
+            for wid in Will.only_valid(self.bal_window.willitems):
+                w = self.bal_window.willitems[wid]
+                if not w.get_status("COMPLETE"):
+                    # Not signed yet.
+                    need_sign = True
+                elif w.we and not w.get_status("PUSHED"):
+                    # Signed but not yet sent to its will-executor.
+                    need_push = True
+
+            if need_sign and need_push:
+                hint = _(
+                    "Next steps (manual): press 'Sign' to sign your will, "
+                    "then 'Broadcast' to send it to the will-executors."
+                )
+            elif need_sign:
+                hint = _(
+                    "Next step (manual): press 'Sign' to sign your will."
+                )
+            elif need_push:
+                hint = _(
+                    "Next step (manual): press 'Broadcast' to send your will "
+                    "to the will-executors."
+                )
+            else:
+                # Nothing left to do (already signed and, if needed, sent).
+                return
+
+            self._next_steps_hint = hint
+            self.msg_edit_row("<b>{}</b>".format(hint))
+        except Exception as hint_err:
+            _logger.debug(f"next-steps hint error: {hint_err}")
 
     def on_error(self, error):
         _logger.error(error)

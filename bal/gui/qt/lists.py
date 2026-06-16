@@ -457,13 +457,19 @@ class PreviewList(MyTreeView, MessageBoxMixin):
         menu.addAction(_("Check"), self.check)
         menu.addAction(_("Invalidate"), self.invalidate_will)
 
-        wizard = QPushButton()
+        # The Wizard is the main entry point to create an inheritance, so make
+        # it stand out: show a bold label next to a slightly larger icon (the
+        # plain icon-only button was too easy to overlook).
+        wizard = QPushButton("  " + _("Create your will"))
         wizard.setIcon(
             read_QIcon_from_bytes(
                 self.bal_window.bal_plugin.read_file("icons/wizard.png")
             )
         )
-        # Tooltip so the icon is self-explanatory when hovered.
+        wizard.setIconSize(QSize(28, 28))
+        wizard.setMinimumHeight(40)
+        wizard.setStyleSheet("QPushButton{font-weight:bold;}")
+        # Tooltip so the button is self-explanatory when hovered.
         wizard.setToolTip(_("Wizard - Build your will"))
         wizard.clicked.connect(self.bal_window.init_wizard)
         # display = QPushButton(_("Display"))
