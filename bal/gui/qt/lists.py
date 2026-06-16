@@ -532,11 +532,15 @@ class PreviewList(MyTreeView, MessageBoxMixin):
 
         will = {}
         for wid, w in self.bal_window.willitems.items():
-            if (
-                w.get_status("VALID")
-                and w.get_status("PUSHED")
-                and not w.get_status("CHECKED")
-            ):
+            # Query the will-executor server for every valid will that HAS a
+            # will-executor assigned and is not yet CHECKED.  Previously only
+            # transactions already marked PUSHED were checked, so a will that
+            # had actually been sent in the past but whose saved status still
+            # read "New" (not PUSHED) was skipped and the Check button reported
+            # "nothing to do".  Will.needs_server_check now also includes such
+            # non-PUSHED wills, so the server can confirm the transaction is
+            # present and correct the status (see set_check_willexecutor).
+            if Will.needs_server_check(w):
                 will[wid] = w
         if will:
             self.bal_window.check_transactions(will)

@@ -84,6 +84,25 @@ class Will:
                 yield k
 
     @staticmethod
+    def needs_server_check(w):
+        """Return True if ``w`` should be queried on its will-executor server
+        when the user presses Check (or on Electrum close).
+
+        A will needs a server check when it is VALID, has a will-executor
+        assigned, and is not yet CHECKED.  This intentionally includes wills
+        that are not (yet) marked PUSHED: a will that was actually sent in the
+        past but whose saved status still reads "New" would otherwise be
+        skipped, leaving the Server column stuck on "Not sent".  The server
+        response (see WillItem.set_check_willexecutor) then corrects the status
+        to PUSHED/CHECKED if the transaction is present, or CHECK_FAIL if not.
+        """
+        return bool(
+            w.get_status("VALID")
+            and w.we
+            and not w.get_status("CHECKED")
+        )
+
+    @staticmethod
     def search_equal_tx(will, tx, wid):
         for w in will:
             if w != wid and not tx.to_json() != will[w]["tx"].to_json():
@@ -421,31 +440,6 @@ class Will:
             pass
 
     @staticmethod
-    def mark_invalidated_by_tx(will, tx):
-        """Mark as INVALIDATED every valid will item that spends at least one
-        of the prevouts consumed by ``tx`` (the on-chain invalidation tx that
-        was just broadcast).
-
-        Once the invalidation tx is broadcast, the previously signed/sent will
-        transactions that relied on those same UTXOs can no longer be mined, so
-        their will items must stop being VALID.  Setting INVALIDATED clears the
-        VALID flag (see WillItem.set_status), which removes them from
-        only_valid_list and therefore prevents the postpone/expire check from
-        firing a *second* invalidation on the next pass.
-
-        Returns the list of will ids that were marked.
-        """
-        spent_prevouts = {i.prevout.to_str() for i in tx.inputs()}
-        invalidated = []
-        for wid in Will.only_valid_list(will):
-            w = will[wid]
-            wi_prevouts = {i.prevout.to_str() for i in w.tx.inputs()}
-            if spent_prevouts & wi_prevouts:
-                Will.set_invalidate(wid, will)
-                invalidated.append(wid)
-        return invalidated
-
-    @staticmethod
     def is_new(will):
         for wid, w in will.items():
             if w.get_status("VALID") and not w.get_status("COMPLETE"):
@@ -732,9 +726,18 @@ class Will:
                             # signed/sent falls through here -> a plain rebuild via
                             # HeirNotFoundException (no on-chain fee needed).
                     else:
+                        # The will still carries this heir, but the heir is no
+                        # longer present in the current heirs set: the user
+                        # removed it.  This must trigger a rebuild exactly like
+                        # "heir added" does, otherwise the removed heir would
+                        # silently stay in the inheritance transaction.  Raising
+                        # HeirNotFoundException reuses the same rebuild path used
+                        # by the Check button and by on_close (Electrum quit).
                         _logger.debug(
-                            f"heir not present transaction is not valid:{wheir} {wid}, {w}"
+                            f"heir removed, transaction is not valid:"
+                            f"{wheir} {wid}, {w}"
                         )
+                        raise HeirNotFoundException(wheir)
 
             if willexecutor := w.we:
                 count = willexecutors_found.get(willexecutor["url"], 0)

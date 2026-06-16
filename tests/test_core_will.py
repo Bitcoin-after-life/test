@@ -164,6 +164,103 @@ def test_will_only_valid_list():
     assert "b" not in result
 
 
+def _make_will_with_heirs(heirs, tx_locktime):
+    """Build a single-item will whose stored heirs == ``heirs`` and whose
+    frozen tx.locktime == ``tx_locktime`` (what the will-executors hold)."""
+    item = WillItem(_make_minimal_willitem_dict(heirs=copy.deepcopy(heirs)))
+    item.STATUS = copy.deepcopy(WillItem.STATUS_DEFAULT)
+    item.tx.locktime = tx_locktime
+    return {"willid_1": item}
+
+
+def test_check_heirs_unchanged_is_coherent():
+    """No heir change -> the will stays coherent (no rebuild)."""
+    lt = 1900000000
+    heirs = {"alice": ["addr_alice", 5000, str(lt)]}
+    will = _make_will_with_heirs(heirs, lt)
+    result = Will.check_willexecutors_and_heirs(
+        will, copy.deepcopy(heirs), {}, False, 0, 100
+    )
+    assert result is True
+
+
+def test_check_heir_removed_triggers_rebuild():
+    """Removing an heir MUST be detected (HeirNotFoundException), so the Check
+    button and on_close rebuild the inheritance.  Regression test for the bug
+    where a removed heir silently stayed in the transaction."""
+    from bal.core.will import HeirNotFoundException
+    lt = 1900000000
+    will_heirs = {
+        "alice": ["addr_alice", 5000, str(lt)],
+        "bob": ["addr_bob", 3000, str(lt)],
+    }
+    current_heirs = {"alice": ["addr_alice", 5000, str(lt)]}  # bob removed
+    will = _make_will_with_heirs(will_heirs, lt)
+    raised = False
+    try:
+        Will.check_willexecutors_and_heirs(
+            will, current_heirs, {}, False, 0, 100
+        )
+    except HeirNotFoundException:
+        raised = True
+    assert raised, "removing an heir must raise HeirNotFoundException"
+
+
+def test_check_heir_added_triggers_rebuild():
+    """Adding an heir must be detected (HeirNotFoundException)."""
+    from bal.core.will import HeirNotFoundException
+    lt = 1900000000
+    will_heirs = {"alice": ["addr_alice", 5000, str(lt)]}
+    current_heirs = {
+        "alice": ["addr_alice", 5000, str(lt)],
+        "bob": ["addr_bob", 3000, str(lt)],  # added
+    }
+    will = _make_will_with_heirs(will_heirs, lt)
+    raised = False
+    try:
+        Will.check_willexecutors_and_heirs(
+            will, current_heirs, {}, False, 0, 100
+        )
+    except HeirNotFoundException:
+        raised = True
+    assert raised, "adding an heir must raise HeirNotFoundException"
+
+
+def test_needs_server_check():
+    """Check button selection logic: a VALID will with a will-executor that is
+    not yet CHECKED must be queried on the server, even if it is not PUSHED
+    (regression for the 'New / Not sent' wills that Check ignored)."""
+    we = {"url": "https://we.example.com"}
+
+    # New (not PUSHED) but has a will-executor -> must be checked.
+    item_new = _make_willitem_blank()
+    item_new.we = we
+    assert Will.needs_server_check(item_new) is True
+
+    # PUSHED but not CHECKED -> must be checked (previous behaviour).
+    item_pushed = _make_willitem_blank()
+    item_pushed.we = we
+    item_pushed.set_status("PUSHED", True)
+    assert Will.needs_server_check(item_pushed) is True
+
+    # Already CHECKED -> no need to check again.
+    item_checked = _make_willitem_blank()
+    item_checked.we = we
+    item_checked.set_status("CHECKED", True)
+    assert Will.needs_server_check(item_checked) is False
+
+    # No will-executor assigned -> nothing to check on a server.
+    item_no_we = _make_willitem_blank()
+    item_no_we.we = None
+    assert Will.needs_server_check(item_no_we) is False
+
+    # Not VALID (e.g. invalidated) -> not checked.
+    item_invalid = _make_willitem_blank()
+    item_invalid.we = we
+    item_invalid.set_status("INVALIDATED", True)
+    assert Will.needs_server_check(item_invalid) is False
+
+
 def test_will_is_new():
     item1 = _make_willitem_blank()
     item1.set_status("COMPLETE", True)
@@ -227,79 +324,6 @@ def test_will_check_tx_height():
 # ------------------------------------------------------------------ #
 # Exception classes
 # ------------------------------------------------------------------ #
-
-def test_will_mark_invalidated_by_tx():
-    """A valid will spending the same prevout as the invalidation tx must be
-    marked INVALIDATED (and therefore lose its VALID flag).  This is what
-    prevents the postpone/expire check from firing a *second* invalidation
-    when phase 1 is restarted after a successful on-chain invalidation."""
-    class FakePrevout:
-        def __init__(self, s):
-            self._s = s
-        def to_str(self):
-            return self._s
-
-    class FakeInput:
-        def __init__(self, s):
-            self.prevout = FakePrevout(s)
-
-    class FakeTx:
-        def __init__(self, prevouts):
-            self._inputs = [FakeInput(p) for p in prevouts]
-        def inputs(self):
-            return self._inputs
-
-    # The real test will item spends this prevout (from _VALID_TX_HEX).
-    spent = "3140eb24b43386f35ba69e3875eb6c93130ac66201d01c58f598defc949a5c2a:0"
-
-    # Will item that spends the same UTXO -> must be invalidated.
-    item_match = _make_willitem_blank()
-    item_match.set_status("COMPLETE", True)
-    # Will item that spends an unrelated UTXO -> must stay VALID.
-    item_other = _make_willitem_blank()
-    item_other.tx = FakeTx(["deadbeef:1"])
-    item_other.children = {}
-
-    will = {"match": item_match, "other": item_other}
-    inval_tx = FakeTx([spent])
-
-    invalidated = Will.mark_invalidated_by_tx(will, inval_tx)
-
-    assert "match" in invalidated
-    assert "other" not in invalidated
-    assert will["match"].get_status("INVALIDATED") is True
-    assert will["match"].get_status("VALID") is False
-    assert will["other"].get_status("VALID") is True
-
-
-def test_will_mark_invalidated_by_tx_no_match():
-    """If no valid will spends any of the invalidation tx's prevouts, nothing
-    is marked."""
-    class FakePrevout:
-        def __init__(self, s):
-            self._s = s
-        def to_str(self):
-            return self._s
-
-    class FakeInput:
-        def __init__(self, s):
-            self.prevout = FakePrevout(s)
-
-    class FakeTx:
-        def __init__(self, prevouts):
-            self._inputs = [FakeInput(p) for p in prevouts]
-        def inputs(self):
-            return self._inputs
-
-    item = _make_willitem_blank()
-    will = {"a": item}
-    inval_tx = FakeTx(["unrelated:9"])
-
-    invalidated = Will.mark_invalidated_by_tx(will, inval_tx)
-
-    assert invalidated == []
-    assert will["a"].get_status("VALID") is True
-
 
 def test_exceptions():
     from bal.core.will import (
