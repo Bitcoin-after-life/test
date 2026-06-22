@@ -13,6 +13,8 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), os.pardir))
 
+import pytest
+
 from bal.core.util import Util, LOCKTIME_THRESHOLD
 
 
@@ -32,10 +34,14 @@ def test_locktime_to_str():
 
 
 def test_str_to_locktime():
-    # relative suffixes pass through
+    # relative suffixes pass through (only days "d" and years "y" are supported)
     assert Util.str_to_locktime("30d") == "30d"
     assert Util.str_to_locktime("1y") == "1y"
-    assert Util.str_to_locktime("144b") == "144b"
+
+    # the block-height suffix "b" was removed (A1): "144b" is no longer a valid
+    # relative locktime, so it is NOT passed through unchanged.
+    with pytest.raises(Exception):
+        Util.str_to_locktime("144b")
 
     # integer string -> int
     assert isinstance(Util.str_to_locktime("500000"), int)
@@ -69,12 +75,12 @@ def test_parse_locktime_string():
 
 
 def test_int_locktime():
+    # int_locktime no longer accepts a "blocks" argument (A1): locktimes are
+    # always expressed in seconds (timestamps), never in block counts.
     assert Util.int_locktime(seconds=1) == 1
     assert Util.int_locktime(minutes=1) == 60
     assert Util.int_locktime(hours=1) == 3600
     assert Util.int_locktime(days=1) == 86400
-    assert Util.int_locktime(blocks=1) == 600
-    assert Util.int_locktime(days=1, blocks=1) == 86400 + 600
     assert Util.int_locktime() == 0
 
 
@@ -223,40 +229,35 @@ def test_get_value_amount():
 
 
 def test_chk_locktime():
+    # chk_locktime signature is now (timestamp_to_check, locktime) (A1):
+    # block-height handling was removed, locktimes are always timestamps.
     now_ts = 1700000000
-    now_block = 800000
 
     # timestamp locktime still in future
-    assert Util.chk_locktime(now_ts, now_block, 1800000000) is True
+    assert Util.chk_locktime(now_ts, 1800000000) is True
 
     # timestamp locktime in past
-    assert Util.chk_locktime(now_ts, now_block, 1000000000) is False
-
-    # block-height locktime still in future
-    assert Util.chk_locktime(now_ts, now_block, 900000) is True
-
-    # block-height locktime in past
-    assert Util.chk_locktime(now_ts, now_block, 100000) is False
+    assert Util.chk_locktime(now_ts, 1000000000) is False
 
 
 def test_anticipate_locktime():
-    # block-height style (note: "anticipate" actually adds for block locktimes)
-    result = Util.anticipate_locktime(800000, blocks=100)
-    assert result == 800000 + 100
+    # anticipate_locktime no longer accepts a "blocks" argument (A1):
+    # it only moves a timestamp earlier (by hours/days).
 
-    # timestamp style
+    # timestamp style: anticipating by 1 day moves the locktime earlier
     ts = 1700000000
     result = Util.anticipate_locktime(ts, days=1)
     assert result < ts
     assert result > 0
+    assert result == ts - 86400
 
     # overflow handling (Windows-safe)
     huge = 2**32 - 1  # NLOCKTIME_MAX
     result = Util.anticipate_locktime(huge, days=1)
     assert result > 0
 
-    # clamp to minimum 1
-    low = Util.anticipate_locktime(10, blocks=100)
+    # clamp to minimum 1 (anticipating a tiny value never goes below 1)
+    low = Util.anticipate_locktime(10, days=1)
     assert low >= 1
 
 

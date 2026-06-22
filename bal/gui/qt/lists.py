@@ -551,6 +551,12 @@ class PreviewList(MyTreeView, MessageBoxMixin):
         if will:
             self.bal_window.check_transactions(will)
         self.update()
+        # NOTE (Group B / B2): signing + broadcasting is already performed
+        # automatically by BalBuildWillDialog.build_will_task() above (called at
+        # the start of check()). We must NOT trigger a second sign/broadcast
+        # cycle here, otherwise the will would be broadcast twice. Whether the
+        # automatic sign/broadcast runs silently or shows the manual "next step"
+        # hints is controlled by the AUTO_SIGN setting inside that dialog.
 
     def invalidate_will(self):
         self.bal_window.invalidate_will()

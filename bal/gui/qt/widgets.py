@@ -347,12 +347,16 @@ class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
         self.textChanged.connect(self.numbify)
         self.isdays = False
         self.isyears = False
-        self.isblocks = False
         self.time_edit = time_edit
 
     @staticmethod
     def replace_str(text):
-        return str(text).replace("d", "").replace("y", "").replace("b", "")
+        """Strip the relative-time suffixes (d/y) from the text.
+
+        Only days ("d") and years ("y") are supported. The block-height
+        suffix ("b") was removed (A1): locktimes are always timestamps now.
+        """
+        return str(text).replace("d", "").replace("y", "")
 
     def checkbdy(self, s, pos, appendix):
         try:
@@ -367,33 +371,29 @@ class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
         return pos, s
 
     def numbify(self):
+        # Only digits plus the day ("d") and year ("y") suffixes are accepted.
+        # The block-height suffix ("b") was removed (A1): locktimes are always
+        # UNIX timestamps now, so block-relative input is no longer allowed.
         text = self.text().strip()
-        # chars = '0123456789bdy' removed the option to choose locktime by block
         chars = "0123456789dy"
         pos = self.cursorPosition()
         pos = len("".join([i for i in text[:pos] if i in chars]))
         s = "".join([i for i in text if i in chars])
         self.isdays = False
         self.isyears = False
-        self.isblocks = False
 
         pos, s = self.checkbdy(s, pos, "d")
         pos, s = self.checkbdy(s, pos, "y")
-        pos, s = self.checkbdy(s, pos, "b")
 
         if "d" in s:
             self.isdays = True
         if "y" in s:
             self.isyears = True
-        if "b" in s:
-            self.isblocks = True
 
         if self.isdays:
             s = self.replace_str(s) + "d"
         if self.isyears:
             s = self.replace_str(s) + "y"
-        if self.isblocks:
-            s = self.replace_str(s) + "b"
         self.blockSignals(True)
         self.setText(s)
         self.blockSignals(False)
@@ -420,6 +420,11 @@ class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
 
 
 class LockTimeDateEdit(QDateTimeEdit, _LockTimeEditor):
+    # GUARD (kept on purpose, A1): NLOCKTIME_BLOCKHEIGHT_MAX is the highest value
+    # Bitcoin interprets as a *block height*. By forcing the minimum to one above
+    # it, every locktime entered here is guaranteed to be a UNIX *timestamp*,
+    # never a block height. This is NOT block-height ordering; it is the
+    # "bouncer" that prevents block-height values from ever being used again.
     min_allowed_value = NLOCKTIME_BLOCKHEIGHT_MAX + 1
     max_allowed_value = _LockTimeEditor.get_max_allowed_timestamp()
 

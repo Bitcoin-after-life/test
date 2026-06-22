@@ -24,7 +24,13 @@ from electrum.transaction import PartialTxOutput
 
 # Bitcoin consensus rule: an nLockTime value strictly below this threshold is
 # interpreted as a *block height*, otherwise it is interpreted as a *UNIX
-# timestamp*.  This single constant drives most of the locktime handling below.
+# timestamp*.
+#
+# The plugin now uses ONLY timestamp-based locktimes (block-height locktimes
+# were removed so that every locktime can be compared and ordered consistently).
+# This constant is kept as a guard: it is the boundary that lets us reject any
+# value that would fall in the block-height range and force every locktime to be
+# a timestamp.
 LOCKTIME_THRESHOLD = 500000000
 
 
@@ -56,11 +62,16 @@ class Util:
     def str_to_locktime(locktime):
         """Parse a user-entered locktime string into its stored form.
 
-        Relative values keep their suffix (``"30d"``, ``"1y"``, ``"144b"``);
-        absolute ISO dates are converted to an integer UNIX timestamp.
+        Relative values keep their suffix (``"30d"``, ``"1y"``); absolute ISO
+        dates are converted to an integer UNIX timestamp.
+
+        Note: only timestamp-based locktimes are supported.  The legacy
+        block-height suffix ``"b"`` has been removed on purpose, so that every
+        locktime in the plugin is a UNIX timestamp and can always be compared
+        and ordered consistently.
         """
         try:
-            if locktime[-1] in ("y", "d", "b"):
+            if locktime[-1] in ("y", "d"):
                 return locktime
             else:
                 return int(locktime)
@@ -78,8 +89,12 @@ class Util:
             * plain int / timestamp -> returned unchanged
             * ``"<n>y"``            -> n years from now (as a timestamp)
             * ``"<n>d"``            -> n days from now (as a timestamp)
-            * ``"<n>b"``            -> current block height + n (needs wallet
-                                       ``w`` to read the chain height)
+
+        Note: the legacy block-height form ``"<n>b"`` has been removed on
+        purpose.  Every locktime is now a UNIX timestamp, so locktimes can
+        always be compared and ordered consistently.  The optional ``w``
+        (wallet) argument is kept only for backward call-site compatibility and
+        is no longer used.
         """
         try:
             return int(locktime)
@@ -96,26 +111,23 @@ class Util:
                     .replace(hour=0, minute=0, second=0, microsecond=0)
                     .timestamp()
                 )
-            if locktime[-1] == "b":
-                locktime = int(locktime[:-1])
-                height = 0
-                if w:
-                    height = Util.get_current_height(w.network)
-                locktime += int(height)
             return int(locktime)
         except Exception:
             pass
         return 0
 
     @staticmethod
-    def int_locktime(seconds=0, minutes=0, hours=0, days=0, blocks=0):
-        """Convert a human duration into seconds (blocks counted as 600s each)."""
+    def int_locktime(seconds=0, minutes=0, hours=0, days=0):
+        """Convert a human duration into seconds.
+
+        Note: the ``blocks`` argument was removed together with block-height
+        support; every duration is now expressed in plain time units.
+        """
         return int(
             seconds
             + minutes * 60
             + hours * 60 * 60
             + days * 60 * 60 * 24
-            + blocks * 600
         )
 
     # ------------------------------------------------------------------ #
@@ -337,43 +349,35 @@ class Util:
     # Locktime arithmetic
     # ------------------------------------------------------------------ #
     @staticmethod
-    def chk_locktime(timestamp_to_check, block_height_to_check, locktime):
-        """Return True if ``locktime`` is still in the future.
+    def chk_locktime(timestamp_to_check, locktime):
+        """Return True if ``locktime`` (a UNIX timestamp) is still in the future.
 
-        Timestamp-style and block-height-style locktimes are compared against
-        the respective "to_check" reference value.
+        Only timestamp-based locktimes are supported now; the previous
+        block-height branch was removed together with block-height support.
         """
-        # TODO BUG:  WHAT HAPPEN AT THRESHOLD?
         locktime = int(locktime)
-        if locktime > LOCKTIME_THRESHOLD and locktime > timestamp_to_check:
-            return True
-        elif locktime < LOCKTIME_THRESHOLD and locktime > block_height_to_check:
-            return True
-        else:
-            return False
+        return locktime > int(timestamp_to_check)
 
     @staticmethod
-    def anticipate_locktime(locktime, blocks=0, hours=0, days=0):
-        """Move a locktime earlier by the given amount.
+    def anticipate_locktime(locktime, hours=0, days=0):
+        """Move a timestamp locktime earlier by the given amount.
 
-        Works on both timestamp and block-height locktimes; never returns a
-        value below 1.
+        Every locktime is a UNIX timestamp now, so this simply subtracts the
+        requested time span.  The result is never allowed to drop below 1.
+
+        Note: the legacy ``blocks`` argument and the block-height branch were
+        removed; only timestamp arithmetic remains.
         """
         locktime = int(locktime)
-        out = 0
-        if locktime > LOCKTIME_THRESHOLD:
-            seconds = blocks * 600 + hours * 3600 + days * 86400
-            # On Windows datetime.fromtimestamp raises OverflowError past 2038
-            # (e.g. NLOCKTIME_MAX); clamp to INT32_MAX (Electrum issue #6170).
-            try:
-                dt = datetime.fromtimestamp(locktime)
-            except (OverflowError, OSError, ValueError):
-                dt = datetime.fromtimestamp(min(locktime, 2 ** 31 - 1))
-            dt -= timedelta(seconds=seconds)
-            out = dt.timestamp()
-        else:
-            blocks -= hours * 6 + days * 144
-            out = locktime + blocks
+        seconds = hours * 3600 + days * 86400
+        # On Windows datetime.fromtimestamp raises OverflowError past 2038
+        # (e.g. NLOCKTIME_MAX); clamp to INT32_MAX (Electrum issue #6170).
+        try:
+            dt = datetime.fromtimestamp(locktime)
+        except (OverflowError, OSError, ValueError):
+            dt = datetime.fromtimestamp(min(locktime, 2 ** 31 - 1))
+        dt -= timedelta(seconds=seconds)
+        out = dt.timestamp()
 
         if out < 1:
             out = 1

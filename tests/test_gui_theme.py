@@ -33,7 +33,8 @@ def test_color_invalidated():
 
 
 def test_color_invalidated_overrides_lower():
-    item = FakeWillItem(INVALIDATED=True, PENDING=True, COMPLETE=True)
+    # PENDING was renamed to MEMPOOL (A2).
+    item = FakeWillItem(INVALIDATED=True, MEMPOOL=True, COMPLETE=True)
     assert status_color(item) == "#f87838"
 
 
@@ -41,12 +42,20 @@ def test_color_replaced():
     assert status_color(FakeWillItem(REPLACED=True)) == "#ff97e9"
 
 
+def test_color_updated():
+    # UPDATED is a new status (A2): light violet. It is checked after REPLACED
+    # but before CONFIRMED/MEMPOOL in the priority list. The original violet
+    # (#800080) was too dark to read, so it was lightened to #b266b2.
+    assert status_color(FakeWillItem(UPDATED=True)) == "#b266b2"
+
+
 def test_color_confirmed():
     assert status_color(FakeWillItem(CONFIRMED=True)) == "#bfbfbf"
 
 
-def test_color_pending():
-    assert status_color(FakeWillItem(PENDING=True)) == "#ffce30"
+def test_color_mempool():
+    # PENDING was renamed to MEMPOOL (A2); the colour (yellow) is unchanged.
+    assert status_color(FakeWillItem(MEMPOOL=True)) == "#ffce30"
 
 
 # ------------------------------------------------------------------ #

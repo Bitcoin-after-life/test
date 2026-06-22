@@ -720,10 +720,18 @@ class BalBuildWillDialog(BalDialog):
             self.msg_set_invalidating(self.msg_error(e))
 
     def loop_push(self):
+        # Broadcast is "one-shot" (Group B / B2 follow-up): each selected
+        # will-executor is contacted ONCE. Transactions that are broadcast
+        # successfully become PUSHED; transactions whose server fails or times
+        # out are left as PUSH_FAIL and simply skipped - they are NOT retried
+        # automatically. A dead will-executor could otherwise never answer and
+        # make the plugin retry forever. The user can broadcast a failed
+        # transaction manually later with the "Broadcast" button. Note that
+        # get_willexecutor_transactions already excludes PUSHED transactions, so
+        # the successful ones are never re-sent on a subsequent run.
         if self._stopping:
             return
         self.msg_set_pushing(_("Broadcasting"))
-        retry = False
         try:
 
             willexecutors = Willexecutors.get_willexecutor_transactions(
@@ -744,7 +752,6 @@ class BalBuildWillDialog(BalDialog):
             # them sequentially after the parallel push, keeping the original
             # check logic untouched.
             already_present = []
-            retry_flag = {"value": False}
             total = len(selected)
             done = {"count": 0}
 
@@ -770,9 +777,10 @@ class BalBuildWillDialog(BalDialog):
                     for wid in willexecutor["txsids"]:
                         self.bal_window.willitems[wid].set_status("PUSHED", True)
                 else:
+                    # One-shot: mark the failed transactions and move on. They
+                    # are left as PUSH_FAIL (no automatic retry).
                     for wid in willexecutor["txsids"]:
                         self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
-                    retry_flag["value"] = True
                 done["count"] += 1
                 # Show the per-server result (Ok/Ko) in bold + color so the
                 # outcome stands out, keeping the server URL in normal weight.
@@ -781,11 +789,11 @@ class BalBuildWillDialog(BalDialog):
                 self.msg_set_pushing(_status_line())
 
             def on_timeout(url, willexecutor):
-                # The global deadline elapsed before this server answered.  Mark
-                # its txs as failed (so the user can retry later) and show it.
+                # The global deadline elapsed before this server answered. Mark
+                # its txs as failed and move on (one-shot: no automatic retry).
+                # The user can broadcast them manually later if desired.
                 for wid in willexecutor.get("txsids", []):
                     self.bal_window.willitems[wid].set_status("PUSH_FAIL", True)
-                retry_flag["value"] = True
                 self.msg_edit_row(
                     "{} : {}".format(url, self.msg_error(_("Timeout - no answer")))
                 )
@@ -820,7 +828,6 @@ class BalBuildWillDialog(BalDialog):
                 "{}/{} ({}s)".format(done["count"], total,
                                      int(time.time() - push_start))
             )
-            retry = retry_flag["value"]
 
             # Verify the "already present" servers (sequential, original logic).
             self.bal_plugin = self.bal_window.bal_plugin
@@ -851,15 +858,18 @@ class BalBuildWillDialog(BalDialog):
                         row,
                     )
 
-            if retry:
-                raise Exception("retry")
+            # One-shot broadcast: we deliberately do NOT raise/retry when some
+            # will-executors failed. Their transactions stay PUSH_FAIL and are
+            # left for the user to broadcast manually. This prevents an endless
+            # retry loop against a will-executor that may never answer.
 
         except Exception as e:
+            # Only genuine, unexpected errors reach here now (not the old
+            # "retry" signal). Report the error; do not loop.
             self.msg_set_pushing(self.msg_error(e))
             self.wait(10)
             if not self._stopping:
                 pass
-                # self.loop_push()
 
     def invalidate_task(self, password, bal_window, tx):
         if self._stopping:
@@ -1038,6 +1048,18 @@ class BalBuildWillDialog(BalDialog):
         short to be sure the user noticed the in-dialog line).
         """
         self._next_steps_hint = None
+        # Group B / B2: when AUTO_SIGN is ON the dialog has already signed and
+        # broadcast the will automatically, so the manual "press Sign/Broadcast"
+        # hints (and the follow-up popup) would be wrong/confusing. Suppress
+        # them in that case. When AUTO_SIGN is OFF, keep the previous behaviour
+        # and guide the user through the remaining manual steps.
+        try:
+            if self.bal_window.bal_plugin.AUTO_SIGN.get():
+                return
+        except Exception:
+            # If the setting cannot be read for any reason, fall back to the
+            # original behaviour (show the manual hints).
+            pass
         try:
             need_sign = False
             need_push = False

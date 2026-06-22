@@ -389,6 +389,13 @@ class Plugin(BalPlugin):
         heir_hide_replaced = BalCheckBox(self.HIDE_REPLACED, on_multiverse_change)
 
         heir_hide_invalidated = BalCheckBox(self.HIDE_INVALIDATED, on_multiverse_change)
+
+        # Auto-sign checkbox (Group B / B2). When ticked, the "Check" action
+        # automatically signs and broadcasts the will after querying the
+        # will-executor servers. Bound to the persisted AUTO_SIGN config; the
+        # default is ON (see plugin_base.py).
+        heir_auto_sign = BalCheckBox(self.AUTO_SIGN)
+
         heir_repush = QPushButton("Rebroadcast transactions")
         heir_repush.clicked.connect(partial(self.broadcast_transactions, True))
         bal_mode = QComboBox()
@@ -412,16 +419,28 @@ class Plugin(BalPlugin):
         )
         add_widget(
             grid,
+            "Auto-sign on Check",
+            heir_auto_sign,
+            3,
+            (
+                "When checking, automatically sign and broadcast the will "
+                "transactions to their will-executors.\n"
+                "The wallet password is requested only if the wallet is "
+                "encrypted."
+            ),
+        )
+        add_widget(
+            grid,
             "Calendar App",
             BalLineEdit(self.CALENDAR_APP),
-            3,
+            4,
             "Default app used to open calendar",
         )
         add_widget(
             grid,
             "Event summary",
             BalLineEdit(self.EVENT_SUMMARY),
-            4,
+            5,
             (
                 "Default message to be used in event summary\n"
                  "Variables:\n"
@@ -432,9 +451,9 @@ class Plugin(BalPlugin):
         )
         add_widget(
             grid,
-            "Event sescription",
+            "Event description",
             BalTextEdit(self.EVENT_DESCRIPTION),
-            5,
+            6,
             (
                 "Default message to be used in event description\n"
                  "Variables:\n"

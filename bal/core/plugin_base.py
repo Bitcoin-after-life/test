@@ -91,7 +91,7 @@ class BalPlugin(BasePlugin):
     """
 
     _version = None
-    __version__ = "0.3.3"  # AUTOMATICALLY GENERATED DO NOT EDIT
+    __version__ = "0.3.4"  # AUTOMATICALLY GENERATED DO NOT EDIT
 
     # Command used to open an .ics calendar file, per operating system.
     default_app = {
@@ -146,8 +146,17 @@ class BalPlugin(BasePlugin):
         self.ASK_BROADCAST = BalConfig(config, "bal_ask_broadcast", True)
         self.BROADCAST = BalConfig(config, "bal_broadcast", True)
         self.LOCKTIME_TIME = BalConfig(config, "bal_locktime_time", 90)
+        # NOTE (A1): block-height locktimes were removed; the plugin now uses
+        # only timestamp-based locktimes. LOCKTIME_BLOCKS is therefore no longer
+        # read anywhere in the code. It is kept here (dormant) on purpose, to
+        # avoid touching a persisted config key ("bal_locktime_blocks") that may
+        # already exist in some users' saved settings.
         self.LOCKTIME_BLOCKS = BalConfig(config, "bal_locktime_blocks", 144 * 90)
         self.LOCKTIMEDELTA_TIME = BalConfig(config, "bal_locktimedelta_time", 7)
+        # NOTE (A1): same as LOCKTIME_BLOCKS above - block-height locktimes were
+        # removed, so LOCKTIMEDELTA_BLOCKS is no longer read anywhere. It is kept
+        # here (dormant) on purpose, to avoid touching the persisted config key
+        # "bal_locktimedelta_blocks" that may already exist in saved settings.
         self.LOCKTIMEDELTA_BLOCKS = BalConfig(
             config, "bal_locktimedelta_blocks", 144 * 7
         )
@@ -157,6 +166,14 @@ class BalPlugin(BasePlugin):
         self.ASK_INVALIDATE = BalConfig(config, "bal_ask_invalidate", True)
         self.PREVIEW = BalConfig(config, "bal_preview", True)
         self.SAVE_TXS = BalConfig(config, "bal_save_txs", True)
+
+        # AUTO_SIGN (Group B / B2): when enabled, pressing "Check" will, after
+        # querying the will-executor servers, automatically sign the will
+        # transactions and broadcast them to their will-executors, without the
+        # user having to invoke "Sign" and "Broadcast" separately. The wallet
+        # password is requested only when the wallet is actually encrypted
+        # (handled by BalWindow.get_wallet_password). Default ON.
+        self.AUTO_SIGN = BalConfig(config, "bal_auto_sign", True)
 
         self.NO_WILLEXECUTOR = BalConfig(config, "bal_no_willexecutor", True)
         self.HIDE_REPLACED = BalConfig(config, "bal_hide_replaced", True)

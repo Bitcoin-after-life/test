@@ -368,7 +368,6 @@ class BalWindow:
     def check_will(self):
         return Will.is_will_valid(
             self.willitems,
-            self.block_to_check,
             self.date_to_check,
             self.will_settings["baltx_fees"],
             self.window.wallet.get_utxos(),
@@ -459,9 +458,10 @@ class BalWindow:
         try:
             self.date_to_check = BalTimestamp(self.will_settings['threshold']).to_timestamp()
             # found = False
-            self.locktime_blocks = self.bal_plugin.LOCKTIME_BLOCKS.get()
-            self.current_block = Util.get_current_height(self.wallet.network)
-            self.block_to_check = 0
+            # NOTE: block-height tracking removed (A1) - locktimes are always
+            # UNIX timestamps now, so we no longer read the current block height
+            # or compute a block_to_check here. Validity is decided purely by
+            # comparing locktimes against date_to_check (a timestamp).
             self.no_willexecutor = self.bal_plugin.NO_WILLEXECUTOR.get()
             self.willexecutors = Willexecutors.get_willexecutors(
                 self.bal_plugin, update=True, bal_window=self, task=False
@@ -479,6 +479,10 @@ class BalWindow:
 
     def build_inheritance_transaction(self, ignore_duplicate=True, keep_original=True):
         try:
+            _logger.info(
+                "BAL-plugin \u25b8 STEP 1/7: prepare inheritance "
+                "(validate settings, amounts and locktime)"
+            )
             if self.disable_plugin:
                 _logger.info("plugin is disabled")
                 return
@@ -523,11 +527,26 @@ class BalWindow:
                     return
 
             try:
+                _logger.info(
+                    "BAL-plugin \u25b8 STEP 2/7: checking if the current will is "
+                    "still coherent (heirs, will-executors, fees, locktime)"
+                )
                 self.check_will()
+                _logger.info(
+                    "BAL-plugin \u25b8 STEP 2/7 result: will is COHERENT, "
+                    "nothing to rebuild"
+                )
             except WillExpiredException:
+                _logger.info(
+                    "BAL-plugin \u25b8 STEP 2/7 result: will EXPIRED -> "
+                    "invalidating on-chain (real fee)"
+                )
                 self.invalidate_will()
                 return
             except NoHeirsException:
+                _logger.info(
+                    "BAL-plugin \u25b8 STEP 2/7 result: no valid heirs -> abort"
+                )
                 return
             except WillPostponedException as e:
                 # The will was already signed/sent and is being postponed.
@@ -536,6 +555,10 @@ class BalWindow:
                 # can never be used by a will-executor), then press "Prepare"
                 # again
                 # to create the new postponed inheritance.
+                _logger.info(
+                    "BAL-plugin \u25b8 STEP 2/7 result: will POSTPONED on a "
+                    "signed/sent tx -> must invalidate on-chain first (real fee)"
+                )
                 _logger.info(f"will postponed: {e}")
                 self.show_message(
                     _(
@@ -553,6 +576,10 @@ class BalWindow:
                 self.invalidate_will()
                 return
             except NotCompleteWillException as e:
+                _logger.info(
+                    "BAL-plugin \u25b8 STEP 2/7 result: will NOT coherent -> "
+                    "REBUILD needed (no on-chain fee)"
+                )
                 _logger.info("{}:{}".format(type(e), e))
                 message = False
                 if isinstance(e, HeirChangeException):
