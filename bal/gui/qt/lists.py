@@ -403,6 +403,16 @@ class PreviewList(MyTreeView, MessageBoxMixin):
 
             items[-1].setBackground(QColor(status_color(bal_tx)))
 
+        # Group C / C6: emphasise the Locktime column by rendering it in bold,
+        # so the delivery time stands out at a glance in the list.
+        try:
+            locktime_item = items[self.Columns.LOCKTIME]
+            bold_font = locktime_item.font()
+            bold_font.setBold(True)
+            locktime_item.setFont(bold_font)
+        except Exception as bold_err:
+            _logger.debug(f"locktime bold error: {bold_err}")
+
         # Tooltip on the Server column: shows the will-executor URL (if any)
         # plus the current server state, so the user can always inspect details.
         try:
@@ -551,6 +561,12 @@ class PreviewList(MyTreeView, MessageBoxMixin):
         if will:
             self.bal_window.check_transactions(will)
         self.update()
+        # NOTE (Group B / B2): signing + broadcasting is already performed
+        # automatically by BalBuildWillDialog.build_will_task() above (called at
+        # the start of check()). We must NOT trigger a second sign/broadcast
+        # cycle here, otherwise the will would be broadcast twice. Whether the
+        # automatic sign/broadcast runs silently or shows the manual "next step"
+        # hints is controlled by the AUTO_SIGN setting inside that dialog.
 
     def invalidate_will(self):
         self.bal_window.invalidate_will()

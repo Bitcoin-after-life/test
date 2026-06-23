@@ -30,6 +30,25 @@ class BalCalendar:
             _logger.error(f"starting calendar app {e}")
             return False
 
+    @staticmethod
+    def desktop_dir():
+        """Return the user's Desktop directory (Group D / D1b).
+
+        Used as the initial folder of the "save .ics" dialog. On Windows this is
+        normally ``C:\\Users\\<name>\\Desktop``; on Linux/macOS ``~/Desktop`` is
+        used when it exists. If the Desktop cannot be located the home directory
+        is returned as a safe fallback, so the save dialog always opens
+        somewhere sensible.
+
+        Returns:
+            An absolute directory path (string).
+        """
+        home = os.path.expanduser("~")
+        desktop = os.path.join(home, "Desktop")
+        if os.path.isdir(desktop):
+            return desktop
+        return home
+
 
     @staticmethod
     def format_time(time):

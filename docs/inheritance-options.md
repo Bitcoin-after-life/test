@@ -41,34 +41,50 @@ important ones:
 
 | Status | Meaning | Set when |
 |---|---|---|
-| `VALID` | The item is the current, usable plan | default `True`; cleared by INVALIDATED/REPLACED/CONFIRMED/PENDING |
+| `VALID` | The item is the current, usable plan | default `True`; cleared by INVALIDATED/REPLACED/CONFIRMED/MEMPOOL |
 | `COMPLETE` (*Signed*) | The transaction has been **signed** | after you press **Sign** |
 | `PUSHED` | The signed tx was **sent to the will‑executor(s)** | after **Broadcast** to executors |
 | `CHECKED` | The will‑executor **confirmed** it holds the tx | after a successful server **Check** (implies `PUSHED`) |
 | `CHECK_FAIL` | The server **check failed** | a queried executor did not return the tx |
 | `PUSH_FAIL` | Sending to the executor failed | cleared when PUSHED becomes true |
 | `CONFIRMED` | The tx is **mined on‑chain** | seen on‑chain with height > 0 |
-| `PENDING` | The tx is **in the mempool** (height 0) | seen on‑chain, not yet mined |
+| `MEMPOOL` | The tx is **in the Electrum mempool** (height 0) | seen on‑chain, not yet mined (was named `PENDING` before v0.3.4) |
 | `INVALIDATED` | Its inputs were spent → it can never confirm | invalidation tx created / inputs gone |
-| `REPLACED` | Superseded by a child tx with earlier locktime | a replacing child was found |
+| `REPLACED` | Superseded by a child tx with **earlier** locktime | a replacing child was found |
+| `ANTICIPATED` | Its locktime was anticipated by 1 day vs a pre‑existing tx with the same heirs | `set_anticipate` (the tx **stays** `VALID`) |
+| `UPDATED` | Replaced by a new tx that keeps the **same** locktime **and** same heirs | a same‑locktime replacement was applied (the tx **stays** `VALID`) |
 | `EXPIRED` | Its locktime is already in the past relative to the check date | `check_will_expired` |
 
 Flag transitions enforced by `set_status` (the safety rules baked in the code):
 
-- Setting `INVALIDATED` / `REPLACED` / `CONFIRMED` / `PENDING` → clears `VALID`.
-- Setting `CONFIRMED` / `PENDING` → clears `INVALIDATED`.
+- Setting `INVALIDATED` / `REPLACED` / `CONFIRMED` / `MEMPOOL` → clears `VALID`.
+- Setting `ANTICIPATED` → **keeps** `VALID` (anticipating only moves the locktime
+  1 day earlier; the tx stays valid).
+- Setting `UPDATED` → **keeps** `VALID` (same locktime + same heirs; the tx stays
+  valid).
+- Setting `CONFIRMED` / `MEMPOOL` → clears `INVALIDATED`.
 - Setting `PUSHED` → clears `PUSH_FAIL` **and** `CHECK_FAIL`.
 - Setting `CHECKED` → implies `PUSHED` (and clears `PUSH_FAIL`).
 
 ### How states map to row colour in the list
 
-| State (first match wins) | Colour | Hex |
-|---|---|---|
-| `CHECK_FAIL` | red | `#e83845` |
-| `INVALIDATED` / `REPLACED` | grey | (muted) |
-| `CONFIRMED` | green | (confirmed on server / chain) |
-| `COMPLETE` (signed, **not** yet pushed) | blue | `#2bc8ed` |
-| `VALID` (prepared, not signed) | default | — |
+The colour is decided by `status_color` (in `gui/qt/theme.py`). The list below is
+in the exact priority order used by the code — the **first** matching status
+wins:
+
+| Priority | State | Colour | Hex |
+|---|---|---|---|
+| 1 | `INVALIDATED` | orange | `#f87838` |
+| 2 | `REPLACED` | pink | `#ff97e9` |
+| 3 | `UPDATED` | light violet | `#b266b2` |
+| 4 | `CONFIRMED` | grey | `#bfbfbf` |
+| 5 | `MEMPOOL` | yellow | `#ffce30` |
+| 6 | `CHECK_FAIL` (and **not** `CHECKED`) | red | `#e83845` |
+| 7 | `CHECKED` | green | `#8afa6c` |
+| 8 | `PUSH_FAIL` | red | `#e83845` |
+| 9 | `PUSHED` | teal | `#73f3c8` |
+| 10 | `COMPLETE` (signed, **not** yet pushed) | blue | `#2bc8ed` |
+| — | none of the above (e.g. plain `VALID`, prepared) | default white | `#ffffff` |
 
 > **Note (v0.3.3 fix):** a will that is *signed but not yet broadcast*
 > (`COMPLETE` and **not** `PUSHED`) is **not** queried on the server, so it stays
@@ -97,13 +113,13 @@ flowchart TD
     B -- No --> Z1[/Show: "Heirs are not defined" — stop/]
     B -- Yes --> C{Check-Alive threshold<br/>in the future?}
     C -- No, it's in the past --> INV1[[Invalidate on-chain<br/>CheckAliveError]]
-    C -- Yes --> D{Any VALID tx with<br/>locktime earlier than<br/>the new date?}
+    C -- Yes --> D{New delivery date<br/>already in the PAST?}
 
-    D -- "Yes (you moved the date EARLIER / anticipate)" --> E{Was that tx already<br/>signed or sent?}
-    E -- "Not signed yet" --> R1[[Rebuild only<br/>no on-chain cost]]
-    E -- "Signed / sent" --> INV2[[Invalidate on-chain FIRST<br/>WillExpired]]
+    D -- "Yes (date is now expired)" --> INV2[[Invalidate on-chain FIRST<br/>WillExpired]]
+    D -- "No (date still in the future)" --> AN{Did you move the date<br/>EARLIER (anticipate)?}
 
-    D -- "No" --> F{Will-executor / fee /<br/>heirs unchanged?}
+    AN -- "Yes (anticipate) — signed or not" --> R1[[Rebuild only<br/>no on-chain cost<br/>NEVER invalidates]]
+    AN -- "No" --> F{Will-executor / fee /<br/>heirs unchanged?}
     F -- "Fee changed" --> R2[[Rebuild<br/>TxFeesChanged]]
     F -- "Will-executor changed/absent" --> R3[[Rebuild<br/>WillExecutorNotPresent / Change]]
     F -- "Heir added or removed,<br/>% or address changed" --> G{Is it a POSTPONE of an<br/>already signed/sent tx?}
@@ -142,7 +158,8 @@ exactly what the will‑executors hold — not the in‑memory copy.
 |---|---|---|---|
 | **Move date LATER** (postpone) | **No** (never signed) | Plain **rebuild** (`HeirNotFound` fall‑through) | **No** |
 | **Move date LATER** (postpone) | **Yes** | **Invalidate first**, then rebuild (`WillPostponed`) | **Yes** |
-| **Move date EARLIER** (anticipate) | any | Old tx becomes **expired** → **invalidate** (`WillExpired`) | **Yes** |
+| **Move date EARLIER, still in the future** (anticipate) | **any** (signed or not) | Plain **rebuild** with the new earlier locktime (`HeirNotFound` fall‑through) — **never** an on‑chain invalidation | **No** |
+| **Move date EARLIER into the past** (new date already passed) | — | Will is genuinely **expired** → **invalidate** (`WillExpired`) | **Yes** |
 | Check‑Alive threshold already passed | — | **Invalidate** (`CheckAliveError`) | **Yes** |
 
 > **Why postpone needs an on‑chain invalidation:** the will‑executor still holds
@@ -152,9 +169,24 @@ exactly what the will‑executors hold — not the in‑memory copy.
 > Spending the old transaction's inputs on‑chain makes the old tx **un‑minable**.
 > The plugin tells you this explicitly and offers to build the invalidation tx.
 
-> **Why anticipate is also on‑chain:** moving the date earlier makes the current
-> committed tx *expired* relative to the new check date; the safe path is the
-> same — invalidate, then rebuild.
+> **Why anticipate (move earlier, still future) is NOT on‑chain:** moving the
+> delivery date *earlier* only makes the inheritance available *sooner*. There is
+> no early‑execution risk to protect against — on the contrary, the new plan is
+> *more* restrictive than the old one. So the plugin simply **rebuilds** the
+> transactions with the new, earlier locktime; **no on‑chain invalidation and no
+> Bitcoin fee** are needed. This holds **even if the will was already
+> signed/sent**: anticipating never invalidates.
+>
+> This is the opposite of postpone: postpone (later date) is dangerous because
+> the will‑executor could still broadcast the *earlier* old tx; anticipate
+> (earlier date) is safe because the old, *later* tx can only ever execute *after*
+> the new one.
+
+> **Note — only a date that lands in the *past* invalidates.** "Move date earlier"
+> only triggers an on‑chain invalidation in the separate case where the new date
+> is already **in the past** relative to the Check‑Alive date: then the will is
+> truly *expired* (`WillExpired`) and must be invalidated, exactly like a
+> Check‑Alive threshold that has already passed.
 
 ### 4.2 Adding an heir
 
@@ -252,11 +284,12 @@ stays exactly as broadcast to the executors.
 | Change % / address (only prepared) | ✅ | ❌ |
 | Change fee rate | ✅ | ❌ |
 | Change / remove will‑executor | ✅ | ❌ |
-| Move date **earlier** (anticipate) | ✅ after | ✅ **yes** |
+| Move date **earlier, still in the future** (anticipate) — signed **or** not | ✅ | ❌ |
+| Move date **earlier into the past** (new date already passed) | ✅ after | ✅ **yes** |
 | Move date **later** (postpone) — will **signed/sent** | ✅ after | ✅ **yes** |
 | Move date **later** (postpone) — will **only prepared** | ✅ | ❌ |
 | Check‑Alive threshold already in the past | ✅ after | ✅ **yes** |
-| Any change to an **already signed/sent** will | ✅ after | ✅ **yes** (invalidate first) |
+| Any change to an **already signed/sent** will **that postpones it or expires it** | ✅ after | ✅ **yes** (invalidate first) |
 | Nothing changed | ❌ | ❌ |
 
 ---
@@ -264,9 +297,11 @@ stays exactly as broadcast to the executors.
 ## 7. Golden rules
 
 1. **Before it's signed**, changing anything is free — just **Prepare** again.
-2. **After it's signed/sent**, moving the date or otherwise replacing it requires
-   an **on‑chain invalidation first** (a small Bitcoin fee) so an old transaction
-   can never be executed early.
+2. **After it's signed/sent**, only **postponing** the date (moving it *later*),
+   or letting it **expire** (a date now in the past), requires an **on‑chain
+   invalidation first** (a small Bitcoin fee) so an old transaction can never be
+   executed early. **Anticipating** (moving the date *earlier*, still in the
+   future) never invalidates — it is just a free **rebuild**.
 3. Always finish with **Sign → Broadcast → Check** so the will‑executors hold the
    *current* plan (green), not an obsolete one.
 4. The wallet is always **fully emptied** by the inheritance, so heir amounts must
@@ -274,5 +309,5 @@ stays exactly as broadcast to the executors.
 
 ---
 
-*This document reflects BAL plugin v0.3.3. Behaviour is derived directly from
+*This document reflects BAL plugin v0.3.4. Behaviour is derived directly from
 `core/will.py` and `gui/qt/window.py`.*

@@ -22,8 +22,9 @@ status into a colour for the transaction list / detail views.
 _STATUS_COLOR_PRIORITY = (
     ("INVALIDATED", "#f87838"),  # orange  - tx can no longer be mined
     ("REPLACED", "#ff97e9"),     # pink    - superseded by another tx
+    ("UPDATED", "#b266b2"),      # light violet - replaced keeping same locktime+heirs
     ("CONFIRMED", "#bfbfbf"),    # grey    - already mined
-    ("PENDING", "#ffce30"),      # yellow  - in mempool, waiting
+    ("MEMPOOL", "#ffce30"),      # yellow  - seen in the Electrum mempool
 )
 
 # Default colour used when no status in the priority list matches.

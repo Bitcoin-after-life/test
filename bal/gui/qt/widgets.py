@@ -23,6 +23,58 @@ from .common import _, _logger  # underscore names are not re-exported by "impor
 from .calendar import BalCalendar
 
 
+def compute_reminder_offsets(days, count):
+    """Return the reminder offsets (in days BEFORE the deadline) for an .ics event.
+
+    Group D / D1. The reminders are spread uniformly across the check-alive
+    period and always fall *before* the delivery deadline, i.e. every returned
+    offset is ``>= 1`` (a reminder exactly on the deadline would be useless).
+
+    Rules:
+        * ``count`` is the requested number of reminders (the settings dialog
+          caps it at 5, default 3).
+        * at most ONE reminder per available day: the effective number is
+          ``min(count, days)``;
+        * with ``days`` available days, offsets are chosen as evenly spaced
+          points inside ``[1, days]`` (1 = the day before the deadline, ``days``
+          = the first day of the period), de-duplicated and returned sorted
+          descending (earliest reminder first).
+
+    Args:
+        days: number of whole days between check-alive and the deadline.
+        count: requested number of reminders.
+
+    Returns:
+        A list of integer day-offsets (each ``>= 1``), e.g. ``[22, 15, 8]`` for
+        ``days=30, count=3``. Empty if there is no room for any reminder.
+    """
+    # No room for any reminder (deadline today or already passed).
+    if days < 1 or count < 1:
+        return []
+
+    # Never more reminders than available days (one per day at most).
+    effective = min(int(count), int(days))
+
+    # A single reminder: put it one day before the deadline.
+    if effective == 1:
+        return [1]
+
+    # Spread "effective" points evenly inside [1, days]. Using i/(effective-1)
+    # for i in 0..effective-1 gives fractions 0..1; map them onto [1, days].
+    # This places the first reminder at the start of the period (offset ~days)
+    # and the last one one day before the deadline (offset 1).
+    offsets = set()
+    for i in range(effective):
+        frac = i / (effective - 1)  # 0.0 .. 1.0
+        # offset = days at frac 0 (start), 1 at frac 1 (just before deadline).
+        offset = round(days - frac * (days - 1))
+        offset = max(1, min(days, offset))
+        offsets.add(offset)
+
+    # Sorted descending: earliest reminder (largest offset) first.
+    return sorted(offsets, reverse=True)
+
+
 class ClickableLabel(QLabel):
     doubleClicked = pyqtSignal()
 
@@ -43,6 +95,10 @@ class BalTxFeesWidget(QWidget):
         self.txfee_widget = QSpinBox(self)
         self.txfee_widget.setMinimum(1)
         self.txfee_widget.setMaximum(10000)
+        # Group C / C5: hovering the fee field explains what the number means.
+        self.txfee_widget.setToolTip(
+            _("Mining fee rate in sat/vByte used for the will transactions")
+        )
         value = (
             value
             if value
@@ -58,7 +114,14 @@ class BalTxFeesWidget(QWidget):
         #layout.addWidget(label)
         button = HelpButton(_("mining fees expressed in sats/vbyte to be used in the Bitcoin transaction.\nHigher value ensure your transaction will be confirmed"))
         button.setText("丰")
-        button.setStyleSheet("font-size: 16px;")
+        # Hover tooltip for the small "丰" help icon (the long explanation still
+        # appears on click via the HelpButton); makes the icon self-explanatory.
+        button.setToolTip(_("Miner fee, click for more information"))
+        # Enlarge only the "丰" glyph on the button itself; without scoping the
+        # rule to QPushButton it also enlarged the tooltip font (making it bigger
+        # than the other tooltips, e.g. the calendar one). Scoping it keeps the
+        # tooltip at the default size like everywhere else.
+        button.setStyleSheet("QPushButton{font-size: 16px;}")
         layout.addWidget(button)
         layout.addWidget(self.txfee_widget)
         # Expose the leading icon (prefix) and the editable field so the parent
@@ -322,6 +385,11 @@ class TimeRawEditWidget(QWidget):
         super().__init__(parent)
         self.editor = LockTimeRawEdit(parent, time_edit)
         self.label = QLabel("")
+        # Group C / C3: this trailing label shows the ABSOLUTE date computed
+        # from the RAW value (e.g. "30d" -> "2027-06-23"), so it needs room for a
+        # full "YYYY-MM-DD" string (~10 characters). Only the input box itself
+        # (LockTimeRawEdit) is narrowed; shrinking this label was a mistake that
+        # truncated the computed date.
         self.label.setFixedWidth(10 * char_width_in_lineedit())
         self.layout = QHBoxLayout(self)
         self.layout.addWidget(self.editor)
@@ -343,16 +411,24 @@ class TimeRawEditWidget(QWidget):
 class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
     def __init__(self, parent=None, time_edit=None):
         QLineEdit.__init__(self, parent)
-        self.setFixedWidth(12 * char_width_in_lineedit())
+        # Group C / C3: narrow the RAW input to roughly a third of its former
+        # width. The accepted values are short relative durations such as "30d"
+        # or "1y", so a handful of characters is plenty while still leaving room
+        # for larger day counts (e.g. "3650d").
+        self.setFixedWidth(6 * char_width_in_lineedit())
         self.textChanged.connect(self.numbify)
         self.isdays = False
         self.isyears = False
-        self.isblocks = False
         self.time_edit = time_edit
 
     @staticmethod
     def replace_str(text):
-        return str(text).replace("d", "").replace("y", "").replace("b", "")
+        """Strip the relative-time suffixes (d/y) from the text.
+
+        Only days ("d") and years ("y") are supported. The block-height
+        suffix ("b") was removed (A1): locktimes are always timestamps now.
+        """
+        return str(text).replace("d", "").replace("y", "")
 
     def checkbdy(self, s, pos, appendix):
         try:
@@ -367,33 +443,29 @@ class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
         return pos, s
 
     def numbify(self):
+        # Only digits plus the day ("d") and year ("y") suffixes are accepted.
+        # The block-height suffix ("b") was removed (A1): locktimes are always
+        # UNIX timestamps now, so block-relative input is no longer allowed.
         text = self.text().strip()
-        # chars = '0123456789bdy' removed the option to choose locktime by block
         chars = "0123456789dy"
         pos = self.cursorPosition()
         pos = len("".join([i for i in text[:pos] if i in chars]))
         s = "".join([i for i in text if i in chars])
         self.isdays = False
         self.isyears = False
-        self.isblocks = False
 
         pos, s = self.checkbdy(s, pos, "d")
         pos, s = self.checkbdy(s, pos, "y")
-        pos, s = self.checkbdy(s, pos, "b")
 
         if "d" in s:
             self.isdays = True
         if "y" in s:
             self.isyears = True
-        if "b" in s:
-            self.isblocks = True
 
         if self.isdays:
             s = self.replace_str(s) + "d"
         if self.isyears:
             s = self.replace_str(s) + "y"
-        if self.isblocks:
-            s = self.replace_str(s) + "b"
         self.blockSignals(True)
         self.setText(s)
         self.blockSignals(False)
@@ -420,6 +492,11 @@ class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
 
 
 class LockTimeDateEdit(QDateTimeEdit, _LockTimeEditor):
+    # GUARD (kept on purpose, A1): NLOCKTIME_BLOCKHEIGHT_MAX is the highest value
+    # Bitcoin interprets as a *block height*. By forcing the minimum to one above
+    # it, every locktime entered here is guaranteed to be a UNIX *timestamp*,
+    # never a block height. This is NOT block-height ordering; it is the
+    # "bouncer" that prevents block-height values from ever being used again.
     min_allowed_value = NLOCKTIME_BLOCKHEIGHT_MAX + 1
     max_allowed_value = _LockTimeEditor.get_max_allowed_timestamp()
 
@@ -549,8 +626,10 @@ class WillSettingsWidget(QWidget):
                 self.bal_window.bal_plugin.read_file("icons/calendar.png")
             )
         )
-        # Tooltip so the icon is self-explanatory when hovered.
-        self.calendar_button.setToolTip(_("Calendar"))
+        # Tooltip so the icon is self-explanatory when hovered (Group C / C5).
+        self.calendar_button.setToolTip(
+            _("Export reminder dates to your calendar (.ics)")
+        )
         self.calendar_button.clicked.connect(self.open_or_save_calendar)
         self.widgets["locktime"] = LockTimeWidget(bal_window, self)
         self.widgets["threshold"] = ThresholdTimeWidget(bal_window, self)
@@ -618,21 +697,87 @@ class WillSettingsWidget(QWidget):
             box.addWidget(calendar_row, alignment=Qt.AlignmentFlag.AlignLeft)
             box.addWidget(fees_w, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        if self.read_only:
-            self.widgets["locktime"].set_read_only(True)
-            self.widgets["threshold"].set_read_only(True)
-            self.widgets["baltx_fees"].set_read_only(True)
+        # Group C / C2: apply the current "Editable dates" setting to the date
+        # fields. Done once at creation here, and re-applied later by
+        # apply_editable_dates() whenever the setting changes (called from
+        # BalWindow.update_all()), so toggling the checkbox takes effect
+        # immediately, exactly like the "Hide Invalidated" filter does.
+        self.apply_editable_dates()
+
+    def apply_editable_dates(self):
+        """Re-read the EDITABLE_DATES setting and lock/unlock the editable fields.
+
+        Outside the "Build your will" wizard (``read_only=True``) the
+        delivery-time, check-alive dates AND the mining fee are display-only by
+        default. When the user ticks "Editable dates" in the settings, all three
+        fields (locktime, threshold and fee) become editable here too; when it
+        is unticked they all go back to read-only. The fee follows exactly the
+        same rule as the dates (it used to stay always read-only, but the user
+        asked for the fee to be editable together with the dates).
+
+        This is safe to call repeatedly: it only adjusts the read-only state of
+        the already-created sub-widgets, it does not rebuild anything. It is the
+        per-update hook that lets the settings checkbox take effect without
+        having to recreate the toolbar / re-open the window.
+        """
+        # Inside the wizard the dates are always editable; nothing to do.
+        if not self.read_only:
+            return
+
+        editable_dates = False
+        try:
+            editable_dates = self.bal_window.bal_plugin.EDITABLE_DATES.get()
+        except Exception:
+            # If the setting cannot be read, fall back to the safe default
+            # (dates remain read-only outside the wizard).
+            editable_dates = False
+
+        self.widgets["locktime"].set_read_only(not editable_dates)
+        self.widgets["threshold"].set_read_only(not editable_dates)
+        # The fee now follows the very same "Editable dates" rule as the dates:
+        # editable outside the wizard only when the setting is ticked.
+        self.widgets["baltx_fees"].set_read_only(not editable_dates)
 
     def create_alarms(self, alarm_start, alarm_end):
-        days = (alarm_end - alarm_start).days+1
+        """Build the VALARM reminder blocks for the .ics event (Group D / D1).
+
+        The number of reminders is read from the NUM_REMINDERS setting (default
+        3, capped at 5 by the settings dialog). They are spread uniformly across
+        the check-alive period and always fall before the delivery deadline; if
+        the period is shorter than the requested number, at most one reminder
+        per day is produced (see compute_reminder_offsets).
+
+        Args:
+            alarm_start: the check-alive datetime (start of the period).
+            alarm_end: the delivery-time / locktime datetime (the deadline).
+
+        Returns:
+            A list of .ics text lines (possibly empty) describing the VALARMs.
+        """
+        days = (alarm_end - alarm_start).days
+
+        # How many reminders the user asked for (default 3 if unreadable).
+        try:
+            count = int(self.bal_window.bal_plugin.NUM_REMINDERS.get())
+        except Exception:
+            count = 3
+
+        offsets = compute_reminder_offsets(days, count)
+
+        # Reminder text shown by the calendar app when each alarm fires.
+        description = _(
+            "BAL reminder: check in before your will is delivered to your heirs."
+        )
+
         lines = []
-        for i in range(1, days):
+        for offset in offsets:
             lines.extend(
                 [
                     "BEGIN:VALARM",
-                    f"TRIGGER;RELATED=END:-P{i}D",
+                    # Fire "offset" days before the event end (the deadline).
+                    f"TRIGGER;RELATED=END:-P{offset}D",
                     "ACTION:DISPLAY",
-                    # f"DESCRIPTION:{self.bal_window.bal_plugin.ALARM_DESCRIPTION.get()}",
+                    f"DESCRIPTION:{BalCalendar.ical_escape(description)}",
                     "END:VALARM",
                 ]
             )
@@ -645,7 +790,6 @@ class WillSettingsWidget(QWidget):
         threshold = self.widgets["threshold"].alarm
         alarm_end = BalCalendar.format_time(locktime)
         alarm_start = BalCalendar.format_time(threshold)
-        days_difference = (locktime - threshold).days
 
         heirs_details = "\r\n".join(f" {heir} - {self.bal_window.heirs[heir][0]}, {self.bal_window.heirs[heir][1]}" for heir in self.bal_window.heirs)
         event_description = BalCalendar.ical_escape(
@@ -676,23 +820,54 @@ class WillSettingsWidget(QWidget):
 
         lines = [s.rstrip("\r\n") for s in lines]
         ics_content = "\r\n".join(lines) + "\r\n"
+        # Keep the generated .ics in a temp file; it is copied to the path the
+        # user picks below.
         self.temp_path = BalCalendar.write_temp_ics(ics_content)
-        opened = BalCalendar.open_with_default_app(
-            self.bal_window.bal_plugin.CALENDAR_APP.get(), self.temp_path
+
+        # Group D / D1b: always ask the user WHERE to save the .ics file (the
+        # plugin no longer tries to open it with a calendar app). The save
+        # dialog opens on the user's Desktop by default, with an .ics filter and
+        # a sensible default filename.
+        desktop = BalCalendar.desktop_dir()
+        default_path = os.path.join(desktop, "will_event.ics")
+        target = getSaveFileName(
+            parent=self.bal_window.window,
+            title=_("Save calendar reminder (.ics)"),
+            # An absolute filename makes getSaveFileName ignore its remembered
+            # IO_DIRECTORY and open on the Desktop instead.
+            filename=default_path,
+            filter="iCalendar (*.ics);;All files (*)",
+            default_extension="ics",
+            config=self.bal_window.window.config,
         )
-        if opened:
-            _logger.info(f"File opened with default app: {self.temp_path}")
-        else:
-            export_meta_gui(
-                self.bal_window.window, f"will_event.ics",self.save_to_cwd
-
+        if not target:
+            # User cancelled the save dialog: nothing to do.
+            return
+        try:
+            self.save_ics_to(target)
+        except Exception as save_err:
+            _logger.error(f"saving .ics failed: {save_err}")
+            self.bal_window.show_warning(
+                _("Could not save the calendar file: {}").format(save_err)
             )
+            return
+        self.bal_window.show_message(
+            _("Calendar file saved to:\n{}").format(target)
+        )
 
+    def save_ics_to(self, target):
+        """Copy the generated .ics from the temp file to ``target`` (Group D / D1b).
 
-    def save_to_cwd(self,filename="event.ics"):
-        target = os.path.abspath(filename)
-        # se il file esiste, sovrascrive
-        _logger.debug(f"save_to_cwd {self.temp_path},{filename}")
+        Overwrites the destination if it already exists. Used by
+        open_or_save_calendar after the user picks a save location.
+
+        Args:
+            target: absolute destination path chosen by the user.
+
+        Returns:
+            The destination path.
+        """
+        _logger.debug(f"save_ics_to {self.temp_path} -> {target}")
         with open(self.temp_path, "rb") as src, open(target, "wb") as dst:
             dst.write(src.read())
         return target
@@ -823,6 +998,43 @@ class BalCheckBox(QCheckBox):
                 self.on_click()
 
         self.stateChanged.connect(on_check)
+
+
+class BalSpinBox(QSpinBox):
+    """Integer spin box bound to a BalConfig value (Group D / D1).
+
+    Mirrors BalCheckBox / BalLineEdit: it shows the persisted value on creation
+    and writes the new value back to the config whenever the user changes it.
+
+    Args:
+        variable: the BalConfig accessor to read from / write to.
+        minimum: smallest selectable value (default 1).
+        maximum: largest selectable value (default 5, used by "Number of
+            reminders").
+        on_change: optional callback invoked after the value is persisted.
+    """
+
+    def __init__(self, variable, minimum=1, maximum=5, on_change=None):
+        QSpinBox.__init__(self)
+        self.setMinimum(minimum)
+        self.setMaximum(maximum)
+        # Coerce the stored value to int and clamp it into the allowed range,
+        # so a stale/invalid config value can never push the spin box out of
+        # bounds.
+        try:
+            current = int(variable.get())
+        except Exception:
+            current = minimum
+        current = max(minimum, min(maximum, current))
+        self.setValue(current)
+        self.on_change = on_change
+
+        def on_value_changed(v):
+            variable.set(int(v))
+            if self.on_change:
+                self.on_change()
+
+        self.valueChanged.connect(on_value_changed)
 
 
 

@@ -38,6 +38,12 @@
   .pill.blue{background:var(--blue)}
   .pill.green{background:var(--green);color:#fff}
   .pill.grey{background:var(--grey);color:#fff}
+  /* Status colours matching gui/qt/theme.py exactly. */
+  .pill.orange{background:#f87838;color:#0d1117}
+  .pill.pink{background:#ff97e9;color:#0d1117}
+  .pill.violet{background:#b266b2;color:#fff}
+  .pill.yellow{background:#ffce30;color:#0d1117}
+  .pill.teal{background:#73f3c8;color:#0d1117}
   .mermaid{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;margin:1.2em 0;overflow-x:auto}
   .lead{color:var(--muted);font-size:1.05rem}
   footer{margin-top:3em;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border);padding-top:1em}
@@ -78,37 +84,47 @@ transaction that would execute your inheritance too early.</strong></blockquote>
 <table>
 <thead><tr><th>Status</th><th>Meaning</th><th>Set when</th></tr></thead>
 <tbody>
-<tr><td><code>VALID</code></td><td>The current, usable plan</td><td>default; cleared by INVALIDATED/REPLACED/CONFIRMED/PENDING</td></tr>
+<tr><td><code>VALID</code></td><td>The current, usable plan</td><td>default; cleared by INVALIDATED/REPLACED/CONFIRMED/MEMPOOL</td></tr>
 <tr><td><code>COMPLETE</code> (<em>Signed</em>)</td><td>The transaction has been <strong>signed</strong></td><td>after <strong>Sign</strong></td></tr>
 <tr><td><code>PUSHED</code></td><td>Signed tx <strong>sent to executor(s)</strong></td><td>after <strong>Broadcast</strong> to executors</td></tr>
 <tr><td><code>CHECKED</code></td><td>Executor <strong>confirmed</strong> it holds the tx</td><td>after a successful server <strong>Check</strong> (implies PUSHED)</td></tr>
 <tr><td><code>CHECK_FAIL</code></td><td>Server <strong>check failed</strong></td><td>a queried executor did not return the tx</td></tr>
 <tr><td><code>PUSH_FAIL</code></td><td>Sending to the executor failed</td><td>cleared when PUSHED becomes true</td></tr>
 <tr><td><code>CONFIRMED</code></td><td>Tx <strong>mined on‑chain</strong></td><td>seen on‑chain, height &gt; 0</td></tr>
-<tr><td><code>PENDING</code></td><td>Tx <strong>in the mempool</strong></td><td>seen on‑chain, height 0</td></tr>
+<tr><td><code>MEMPOOL</code></td><td>Tx <strong>in the Electrum mempool</strong></td><td>seen on‑chain, height 0 (named <code>PENDING</code> before v0.3.4)</td></tr>
 <tr><td><code>INVALIDATED</code></td><td>Inputs spent → can never confirm</td><td>invalidation tx / inputs gone</td></tr>
-<tr><td><code>REPLACED</code></td><td>Superseded by an earlier‑locktime child</td><td>a replacing child found</td></tr>
+<tr><td><code>REPLACED</code></td><td>Superseded by an <strong>earlier</strong>‑locktime child</td><td>a replacing child found</td></tr>
+<tr><td><code>ANTICIPATED</code></td><td>Locktime anticipated by 1 day vs a pre‑existing tx with the same heirs</td><td><code>set_anticipate</code> (tx <strong>stays</strong> VALID)</td></tr>
+<tr><td><code>UPDATED</code></td><td>Replaced by a new tx keeping the <strong>same</strong> locktime + same heirs</td><td>same‑locktime replacement (tx <strong>stays</strong> VALID)</td></tr>
 <tr><td><code>EXPIRED</code></td><td>Locktime already in the past vs the check date</td><td><code>check_will_expired</code></td></tr>
 </tbody>
 </table>
 
 <h3>Safety rules baked into <code>set_status</code></h3>
 <ul>
-  <li>Setting <code>INVALIDATED</code> / <code>REPLACED</code> / <code>CONFIRMED</code> / <code>PENDING</code> → clears <code>VALID</code>.</li>
-  <li>Setting <code>CONFIRMED</code> / <code>PENDING</code> → clears <code>INVALIDATED</code>.</li>
+  <li>Setting <code>INVALIDATED</code> / <code>REPLACED</code> / <code>CONFIRMED</code> / <code>MEMPOOL</code> → clears <code>VALID</code>.</li>
+  <li>Setting <code>ANTICIPATED</code> → <strong>keeps</strong> <code>VALID</code> (only moves the locktime 1 day earlier).</li>
+  <li>Setting <code>UPDATED</code> → <strong>keeps</strong> <code>VALID</code> (same locktime + same heirs).</li>
+  <li>Setting <code>CONFIRMED</code> / <code>MEMPOOL</code> → clears <code>INVALIDATED</code>.</li>
   <li>Setting <code>PUSHED</code> → clears <code>PUSH_FAIL</code> <strong>and</strong> <code>CHECK_FAIL</code>.</li>
   <li>Setting <code>CHECKED</code> → implies <code>PUSHED</code>.</li>
 </ul>
 
 <h3>How states map to row colour</h3>
 <table>
-<thead><tr><th>State (first match wins)</th><th>Colour</th><th>Hex</th></tr></thead>
+<thead><tr><th>Priority</th><th>State</th><th>Colour</th><th>Hex</th></tr></thead>
 <tbody>
-<tr><td><code>CHECK_FAIL</code></td><td><span class="pill red">red</span></td><td><code>#e83845</code></td></tr>
-<tr><td><code>INVALIDATED</code> / <code>REPLACED</code></td><td><span class="pill grey">grey</span></td><td>muted</td></tr>
-<tr><td><code>CONFIRMED</code></td><td><span class="pill green">green</span></td><td>confirmed</td></tr>
-<tr><td><code>COMPLETE</code> (signed, not pushed)</td><td><span class="pill blue">blue</span></td><td><code>#2bc8ed</code></td></tr>
-<tr><td><code>VALID</code> (prepared, not signed)</td><td>default</td><td>—</td></tr>
+<tr><td>1</td><td><code>INVALIDATED</code></td><td><span class="pill orange">orange</span></td><td><code>#f87838</code></td></tr>
+<tr><td>2</td><td><code>REPLACED</code></td><td><span class="pill pink">pink</span></td><td><code>#ff97e9</code></td></tr>
+<tr><td>3</td><td><code>UPDATED</code></td><td><span class="pill violet">light violet</span></td><td><code>#b266b2</code></td></tr>
+<tr><td>4</td><td><code>CONFIRMED</code></td><td><span class="pill grey">grey</span></td><td><code>#bfbfbf</code></td></tr>
+<tr><td>5</td><td><code>MEMPOOL</code></td><td><span class="pill yellow">yellow</span></td><td><code>#ffce30</code></td></tr>
+<tr><td>6</td><td><code>CHECK_FAIL</code> (and not <code>CHECKED</code>)</td><td><span class="pill red">red</span></td><td><code>#e83845</code></td></tr>
+<tr><td>7</td><td><code>CHECKED</code></td><td><span class="pill green">green</span></td><td><code>#8afa6c</code></td></tr>
+<tr><td>8</td><td><code>PUSH_FAIL</code></td><td><span class="pill red">red</span></td><td><code>#e83845</code></td></tr>
+<tr><td>9</td><td><code>PUSHED</code></td><td><span class="pill teal">teal</span></td><td><code>#73f3c8</code></td></tr>
+<tr><td>10</td><td><code>COMPLETE</code> (signed, not pushed)</td><td><span class="pill blue">blue</span></td><td><code>#2bc8ed</code></td></tr>
+<tr><td>—</td><td>none of the above (plain <code>VALID</code>)</td><td>default white</td><td><code>#ffffff</code></td></tr>
 </tbody>
 </table>
 <blockquote><strong>v0.3.3 fix:</strong> a will that is <em>signed but not yet broadcast</em>
@@ -125,13 +141,13 @@ flowchart TD
     B -- No --> Z1[/Show: Heirs are not defined — stop/]
     B -- Yes --> C{Check-Alive threshold in the future?}
     C -- "No, it's in the past" --> INV1[[Invalidate on-chain<br/>CheckAliveError]]
-    C -- Yes --> D{Any VALID tx with locktime earlier than the new date?}
+    C -- Yes --> D{New delivery date already in the PAST?}
 
-    D -- "Yes you moved the date EARLIER / anticipate" --> E{Was that tx already signed or sent?}
-    E -- "Not signed yet" --> R1[[Rebuild only<br/>no on-chain cost]]
-    E -- "Signed / sent" --> INV2[[Invalidate on-chain FIRST<br/>WillExpired]]
+    D -- "Yes date is now expired" --> INV2[[Invalidate on-chain FIRST<br/>WillExpired]]
+    D -- "No date still in the future" --> AN{Did you move the date EARLIER anticipate?}
 
-    D -- No --> F{Will-executor / fee / heirs unchanged?}
+    AN -- "Yes anticipate — signed or not" --> R1[[Rebuild only<br/>no on-chain cost<br/>NEVER invalidates]]
+    AN -- No --> F{Will-executor / fee / heirs unchanged?}
     F -- "Fee changed" --> R2[[Rebuild<br/>TxFeesChanged]]
     F -- "Will-executor changed/absent" --> R3[[Rebuild<br/>WillExecutorNotPresent / Change]]
     F -- "Heir added/removed, % or address changed" --> G{POSTPONE of an already signed/sent tx?}
@@ -165,13 +181,20 @@ already‑signed transaction</strong> (<code>w.tx.locktime</code>) — exactly w
 <tbody>
 <tr><td>Move date <strong>LATER</strong> (postpone)</td><td>No (never signed)</td><td>Plain <strong>rebuild</strong></td><td class="no">No</td></tr>
 <tr><td>Move date <strong>LATER</strong> (postpone)</td><td>Yes</td><td><strong>Invalidate first</strong>, then rebuild (WillPostponed)</td><td class="fee">Yes</td></tr>
-<tr><td>Move date <strong>EARLIER</strong> (anticipate)</td><td>any</td><td>Old tx <strong>expired</strong> → invalidate (WillExpired)</td><td class="fee">Yes</td></tr>
+<tr><td>Move date <strong>EARLIER, still in the future</strong> (anticipate)</td><td><strong>any</strong> (signed or not)</td><td>Plain <strong>rebuild</strong> with the new earlier locktime — <strong>never</strong> invalidates</td><td class="no">No</td></tr>
+<tr><td>Move date <strong>EARLIER into the past</strong> (new date already passed)</td><td>—</td><td>Will is genuinely <strong>expired</strong> → invalidate (WillExpired)</td><td class="fee">Yes</td></tr>
 <tr><td>Check‑Alive threshold already passed</td><td>—</td><td><strong>Invalidate</strong> (CheckAliveError)</td><td class="fee">Yes</td></tr>
 </tbody>
 </table>
 <blockquote><strong>Why postpone needs on‑chain invalidation:</strong> the executor still holds the <em>old</em>
 transaction with the <em>earlier</em> locktime. Spending its inputs on‑chain makes it un‑minable, so it can
 never execute the inheritance early. The plugin tells you this and offers to build the invalidation tx.</blockquote>
+<blockquote><strong>Why anticipate (move earlier, still future) is NOT on‑chain:</strong> moving the delivery
+date <em>earlier</em> only makes the inheritance available <em>sooner</em>; there is no early‑execution risk,
+so the plugin simply <strong>rebuilds</strong> the transactions with the new earlier locktime — <strong>no
+on‑chain invalidation and no Bitcoin fee</strong>. This holds <strong>even if the will was already
+signed/sent</strong>: anticipating never invalidates. Only a date that lands in the <em>past</em> is treated
+as expired and invalidated (<code>WillExpired</code>).</blockquote>
 
 <h3>4.2 Adding an heir</h3>
 <p>An heir present in your set but not yet in the will raises <code>HeirNotFoundException</code>.</p>
@@ -237,11 +260,12 @@ executor that <em>should</em> hold your tx did not return it — re‑Broadcast 
 <tr><td>Change % / address (only prepared)</td><td class="yes">Yes</td><td class="no">No</td></tr>
 <tr><td>Change fee rate</td><td class="yes">Yes</td><td class="no">No</td></tr>
 <tr><td>Change / remove will‑executor</td><td class="yes">Yes</td><td class="no">No</td></tr>
-<tr><td>Move date <strong>earlier</strong> (anticipate)</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
+<tr><td>Move date <strong>earlier, still in the future</strong> (anticipate) — signed <strong>or</strong> not</td><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><td>Move date <strong>earlier into the past</strong> (new date already passed)</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
 <tr><td>Move date <strong>later</strong> — will <strong>signed/sent</strong></td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
 <tr><td>Move date <strong>later</strong> — will <strong>only prepared</strong></td><td class="yes">Yes</td><td class="no">No</td></tr>
 <tr><td>Check‑Alive threshold already passed</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
-<tr><td>Any change to an <strong>already signed/sent</strong> will</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
+<tr><td>Any change to an <strong>already signed/sent</strong> will <strong>that postpones it or expires it</strong></td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
 <tr><td>Nothing changed</td><td class="no">No</td><td class="no">No</td></tr>
 </tbody>
 </table>
@@ -249,13 +273,16 @@ executor that <em>should</em> hold your tx did not return it — re‑Broadcast 
 <h2>7. Golden rules</h2>
 <ol>
 <li><strong>Before it's signed</strong>, changing anything is free — just <strong>Prepare</strong> again.</li>
-<li><strong>After it's signed/sent</strong>, moving the date or replacing it requires an <strong>on‑chain
-    invalidation first</strong> (a small Bitcoin fee) so an old transaction can never execute early.</li>
+<li><strong>After it's signed/sent</strong>, only <strong>postponing</strong> the date (moving it <em>later</em>),
+    or letting it <strong>expire</strong> (a date now in the past), requires an <strong>on‑chain invalidation
+    first</strong> (a small Bitcoin fee) so an old transaction can never execute early.
+    <strong>Anticipating</strong> (moving the date <em>earlier</em>, still in the future) never invalidates —
+    it is just a free <strong>rebuild</strong>.</li>
 <li>Always finish with <strong>Sign → Broadcast → Check</strong> so executors hold the current plan (green).</li>
 <li>The wallet is always <strong>fully emptied</strong> by the inheritance, so heir amounts must add up.</li>
 </ol>
 
-<footer>This document reflects BAL plugin v0.3.3. Behaviour is derived directly from
+<footer>This document reflects BAL plugin v0.3.4. Behaviour is derived directly from
 <code>core/will.py</code> and <code>gui/qt/window.py</code>.</footer>
 </div>
 

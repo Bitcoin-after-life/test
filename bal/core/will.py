@@ -28,7 +28,6 @@ The status flags themselves (the source of truth) stay here; only the mapping
 
 import copy
 
-from electrum.bitcoin import NLOCKTIME_BLOCKHEIGHT_MAX
 from electrum.i18n import _
 from electrum.logging import Logger, get_logger
 from electrum.transaction import (
@@ -458,7 +457,7 @@ class Will:
                 if (
                     wi.get_status("VALID")
                     or wi.get_status("CONFIRMED")
-                    or wi.get_status("PENDING")
+                    or wi.get_status("MEMPOOL")
                 ):
                     prevout_id = w[2].prevout.txid.hex()
                     if not inutxo:
@@ -506,7 +505,7 @@ class Will:
             if (
                 not w.father
                 or willtree[w.father].get_status("CONFIRMED")
-                or willtree[w.father].get_status("PENDING")
+                or willtree[w.father].get_status("MEMPOOL")
             ):
                 for inp in w.tx.inputs():
                     inp_str = Util.utxo_to_str(inp)
@@ -516,7 +515,7 @@ class Will:
                             if height < 0:
                                 Will.set_invalidate(wid, willtree)
                             elif height == 0:
-                                w.set_status("PENDING", True)
+                                w.set_status("MEMPOOL", True)
                             else:
                                 w.set_status("CONFIRMED", True)
 
@@ -558,7 +557,20 @@ class Will:
                     )
 
     @staticmethod
-    def check_will(will, all_utxos, wallet, block_to_check, timestamp_to_check):
+    def check_will(will, all_utxos, wallet, timestamp_to_check):
+        """Validate a will against the current wallet state.
+
+        Locktimes are always UNIX timestamps (block-height locktimes are no
+        longer supported by this plugin), so expiry is decided purely by
+        comparing each transaction's locktime against ``timestamp_to_check``.
+
+        Args:
+            will: The will dictionary (WillItem entries keyed by txid).
+            all_utxos: The list of UTXOs currently available in the wallet.
+            wallet: The Electrum wallet object.
+            timestamp_to_check: The reference UNIX timestamp (usually "now")
+                used to decide whether any transaction has expired.
+        """
         Will.add_willtree(will)
         utxos_list = Will.utxos_strs(all_utxos)
 
@@ -566,9 +578,7 @@ class Will:
 
         all_inputs = Will.get_all_inputs(will, only_valid=True)
         all_inputs_min_locktime = Will.get_all_inputs_min_locktime(all_inputs)
-        Will.check_will_expired(
-            all_inputs_min_locktime, block_to_check, timestamp_to_check
-        )
+        Will.check_will_expired(all_inputs_min_locktime, timestamp_to_check)
 
         all_inputs = Will.get_all_inputs(will, only_valid=True)
 
@@ -583,7 +593,6 @@ class Will:
     @staticmethod
     def is_will_valid(
         will,
-        block_to_check,
         timestamp_to_check,
         tx_fees,
         all_utxos,
@@ -593,10 +602,29 @@ class Will:
         wallet=False,
         callback_not_valid_tx=None,
     ):
+        """Check whether the whole will is valid at the given timestamp.
+
+        Locktimes are always UNIX timestamps, so the validity check only needs
+        a single reference timestamp (no block height).
+
+        Args:
+            will: The will dictionary (WillItem entries keyed by txid).
+            timestamp_to_check: Reference UNIX timestamp (usually "now").
+            tx_fees: Fee rate used for the dust/coverage check.
+            all_utxos: The list of UTXOs currently available in the wallet.
+            heirs: Optional heirs dictionary.
+            willexecutors: Optional will-executors dictionary.
+            self_willexecutor: Whether the user acts as their own executor.
+            wallet: The Electrum wallet object.
+            callback_not_valid_tx: Optional callback invoked for invalid txs.
+
+        Returns:
+            True if the will is valid; raises an exception otherwise.
+        """
         heirs = heirs if heirs is not None else {}
         willexecutors= willexecutors if willexecutors is not None else {}
 
-        Will.check_will(will, all_utxos, wallet, block_to_check, timestamp_to_check)
+        Will.check_will(will, all_utxos, wallet, timestamp_to_check)
         if heirs:
             if not Will.check_willexecutors_and_heirs(
                 will,
@@ -625,25 +653,30 @@ class Will:
         return True
 
     @staticmethod
-    def check_will_expired(all_inputs_min_locktime, block_to_check, timestamp_to_check):
+    def check_will_expired(all_inputs_min_locktime, timestamp_to_check):
+        """Raise WillExpiredException if any valid transaction has expired.
+
+        Locktimes are always UNIX timestamps, so a transaction is expired when
+        its locktime is in the past relative to ``timestamp_to_check``.
+
+        Args:
+            all_inputs_min_locktime: Mapping prevout -> will-item info, used to
+                find the minimum locktime per input.
+            timestamp_to_check: Reference UNIX timestamp (usually "now").
+        """
         _logger.info("check if some transaction is expired")
         for prevout_str, wid in all_inputs_min_locktime.items():
             for w in wid:
                 if w[1].get_status("VALID"):
                     locktime = int(wid[0][1].tx.locktime)
-                    if locktime <= NLOCKTIME_BLOCKHEIGHT_MAX:
-                        if locktime < int(block_to_check):
-                            raise WillExpiredException(
-                                f"Will Expired {wid[0][0]}: {locktime}<{block_to_check}"
-                            )
+                    # Locktimes are always timestamps: expired when in the past.
+                    if locktime < int(timestamp_to_check):
+                        raise WillExpiredException(
+                            f"Will Expired {wid[0][0]}: {locktime}<{timestamp_to_check}"
+                        )
                     else:
-                        if locktime < int(timestamp_to_check):
-                            raise WillExpiredException(
-                                f"Will Expired {wid[0][0]}: {locktime}<{timestamp_to_check}"
-                            )
-                        else:
-                            from datetime import datetime
-                            _logger.debug(f"Will Not Expired {wid[0][0]}: {datetime.fromtimestamp(locktime).isoformat()} > {datetime.fromtimestamp(timestamp_to_check).isoformat()}")
+                        from datetime import datetime
+                        _logger.debug(f"Will Not Expired {wid[0][0]}: {datetime.fromtimestamp(locktime).isoformat()} > {datetime.fromtimestamp(timestamp_to_check).isoformat()}")
 
     # def check_all_input_spent_are_in_wallet():
     #    _logger.info("check all input spent are in wallet or valid txs")
@@ -723,11 +756,24 @@ class Will:
                                     f"{tx_locktime}->{new_locktime} "
                                     f"on a signed/sent will"
                                 )
-                            # new_locktime < tx_locktime (anticipate) is left to
-                            # check_will_expired -> WillExpiredException.
+                            # ANTICIPATE (new_locktime < tx_locktime): the user
+                            # manually moved the delivery date EARLIER.
+                            #   * If the new date is still in the FUTURE, this is
+                            #     a plain ANTICIPATE: it falls through here and is
+                            #     rebuilt via HeirNotFoundException (no on-chain
+                            #     fee). It must NEVER invalidate on-chain, even if
+                            #     the will was already signed/sent (A3, owner
+                            #     decision D2 = A1).
+                            #   * If the new date is in the PAST (relative to the
+                            #     check date) the will is genuinely expired and
+                            #     check_will_expired -> WillExpiredException handles
+                            #     it (on-chain invalidation). That is a different
+                            #     situation from "anticipate" and is intentionally
+                            #     kept.
+                            #
                             # new_locktime > tx_locktime on a will that was never
-                            # signed/sent falls through here -> a plain rebuild via
-                            # HeirNotFoundException (no on-chain fee needed).
+                            # signed/sent also falls through here -> a plain rebuild
+                            # via HeirNotFoundException (no on-chain fee needed).
                     else:
                         # The will still carries this heir, but the heir is no
                         # longer present in the current heirs set: the user
@@ -774,6 +820,18 @@ class Will:
 
 
 class WillItem(Logger):
+    # Default status flags for an inheritance transaction.
+    # Each entry maps an internal status key to [human-readable label, default
+    # boolean value].
+    #
+    # A2 changes:
+    #   * "PENDING" was renamed to "MEMPOOL" (the transaction has been seen in
+    #     the Electrum mempool). Old saved wills that still carry the legacy
+    #     "PENDING" key are migrated to "MEMPOOL" in __init__ (see below), so
+    #     nothing is lost.
+    #   * "UPDATED" was added: the transaction was spendable AND valid, and a new
+    #     transaction replaces it while keeping the SAME locktime and SAME heirs.
+    #     UPDATED keeps the VALID flag (see set_status).
     STATUS_DEFAULT = {
         "ANTICIPATED": ["Anticipated", False],
         "BROADCASTED": ["Broadcasted", False],
@@ -786,30 +844,57 @@ class WillItem(Logger):
         "EXPORTED": ["Exported", False],
         "IMPORTED": ["Imported", False],
         "INVALIDATED": ["Invalidated", False],
-        "PENDING": ["Pending", False],
+        "MEMPOOL": ["Mempool", False],
         "PUSH_FAIL": ["Push failed", False],
         "PUSHED": ["Pushed", False],
         "REPLACED": ["Replaced", False],
         "RESTORED": ["Restored", False],
+        "UPDATED": ["Updated", False],
         "VALID": ["Valid", True],
     }
 
     def set_status(self, status, value=True):
-        # _logger.trace(
-        #    "set status {} - {} {} -> {}".format(
-        #        self._id, status, self.STATUS[status][1], value
-        #    )
-        # )
+        """Set a status flag and apply the related side effects.
+
+        Some statuses imply that other statuses must change. The rules below
+        match the inheritance state machine:
+
+        VALID handling:
+            * INVALIDATED, REPLACED, CONFIRMED, MEMPOOL -> clear VALID
+              (the transaction can no longer be delivered as a valid will tx).
+            * ANTICIPATED -> KEEPS VALID. Anticipating only moves the locktime
+              earlier by 1 day; the transaction stays valid (it is NOT in the
+              "clear VALID" list on purpose).
+            * UPDATED -> KEEPS VALID. The transaction is replaced by a new one
+              that keeps the SAME locktime and SAME heirs, so it stays valid
+              (it is NOT in the "clear VALID" list on purpose).
+
+        Other side effects:
+            * CONFIRMED, MEMPOOL -> clear INVALIDATED (the tx is on-chain or in
+              the mempool, so it is no longer considered invalidated).
+            * PUSHED -> clear PUSH_FAIL and CHECK_FAIL.
+            * CHECKED -> set PUSHED and clear PUSH_FAIL.
+
+        Args:
+            status: The status key to set (must exist in STATUS).
+            value: True to set the flag, False to clear it. Defaults to True.
+
+        Returns:
+            The applied boolean value, or None if the flag was already set to
+            that value (no change).
+        """
         if self.STATUS[status][1] == bool(value):
             return None
 
         self.status += "." + (("NOT " if not value else "") + _(self.STATUS[status][0]))
         self.STATUS[status][1] = bool(value)
         if value:
-            if status in ["INVALIDATED", "REPLACED", "CONFIRMED", "PENDING"]:
+            # NOTE: ANTICIPATED and UPDATED are intentionally NOT in this list,
+            # so they keep the VALID flag (see docstring above).
+            if status in ["INVALIDATED", "REPLACED", "CONFIRMED", "MEMPOOL"]:
                 self.STATUS["VALID"][1] = False
 
-            if status in ["CONFIRMED", "PENDING"]:
+            if status in ["CONFIRMED", "MEMPOOL"]:
                 self.STATUS["INVALIDATED"][1] = False
 
             if status in ["PUSHED"]:
@@ -845,6 +930,14 @@ class WillItem(Logger):
             self.STATUS = copy.deepcopy(WillItem.STATUS_DEFAULT)
             for s in self.STATUS:
                 self.STATUS[s][1] = w.get(s, WillItem.STATUS_DEFAULT[s][1])
+            # Backward-compatibility migration (A2): the "PENDING" status was
+            # renamed to "MEMPOOL". Wills saved by older versions of the plugin
+            # store the flag under the legacy "PENDING" key, so if that key is
+            # present and set, carry it over to "MEMPOOL". This way no state is
+            # lost when loading an older will. The new key always wins if both
+            # happen to be present.
+            if "MEMPOOL" not in w and w.get("PENDING"):
+                self.STATUS["MEMPOOL"][1] = True
             if not _id:
                 self._id = self.tx.txid()
             else:

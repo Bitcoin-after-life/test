@@ -118,11 +118,16 @@ def test_locktime_editor_min_max():
 # ------------------------------------------------------------------ #
 
 def test_locktime_raw_edit_replace_str():
+    # replace_str only strips the day ("d") and year ("y") suffixes. The
+    # block-height suffix ("b") was removed (A1), so "b" is NOT stripped
+    # anymore (locktimes are always UNIX timestamps now).
     from bal.gui.qt.widgets import LockTimeRawEdit
     assert LockTimeRawEdit.replace_str("123d") == "123"
     assert LockTimeRawEdit.replace_str("456y") == "456"
-    assert LockTimeRawEdit.replace_str("789b") == "789"
-    assert LockTimeRawEdit.replace_str("12d34y56b") == "123456"
+    # "b" is left untouched (no longer a recognised suffix)
+    assert LockTimeRawEdit.replace_str("789b") == "789b"
+    # only d/y are stripped; a stray "b" remains
+    assert LockTimeRawEdit.replace_str("12d34y56b") == "123456b"
 
 
 def test_locktime_raw_edit_checkbdy():
