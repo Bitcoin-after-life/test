@@ -470,7 +470,7 @@ class PreviewList(MyTreeView, MessageBoxMixin):
         # The Wizard is the main entry point to create an inheritance, so make
         # it stand out: show a bold label next to a slightly larger icon (the
         # plain icon-only button was too easy to overlook).
-        wizard = QPushButton("  " + _("Create your will"))
+        wizard = QPushButton("  " + _("Build Your Will"))
         wizard.setIcon(
             read_QIcon_from_bytes(
                 self.bal_window.bal_plugin.read_file("icons/wizard.png")

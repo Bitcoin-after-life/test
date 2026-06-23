@@ -27,6 +27,7 @@ The status flags themselves (the source of truth) stay here; only the mapping
 """
 
 import copy
+from datetime import datetime, timezone
 
 from electrum.i18n import _
 from electrum.logging import Logger, get_logger
@@ -653,11 +654,58 @@ class Will:
         return True
 
     @staticmethod
+    def _short_will_id(will_id):
+        """Return a human-friendly, shortened form of a will id (hash).
+
+        Will ids are long hex strings (e.g. a 64-char txid) that are hard to
+        read in a message box. This keeps only the first and last 8 characters
+        joined by an ellipsis (e.g. ``9f1b0a75…fed9ae1b``). Short ids are left
+        untouched.
+
+        Args:
+            will_id: The will identifier (hash) to shorten; coerced to ``str``.
+
+        Returns:
+            str: The shortened id, or the original string if it is short.
+        """
+        text = str(will_id)
+        # Only shorten when there is something to gain (>= 20 chars), otherwise
+        # the ellipsis form would not actually be shorter or clearer.
+        if len(text) <= 20:
+            return text
+        return f"{text[:8]}\u2026{text[-8:]}"
+
+    @staticmethod
+    def _format_locktime(locktime):
+        """Format a UNIX locktime timestamp as a readable UTC date string.
+
+        Args:
+            locktime: UNIX timestamp (seconds) to format.
+
+        Returns:
+            str: A string like ``2026-06-22 11:00 UTC``. If formatting fails
+            for any reason, the raw timestamp is returned as a fallback so the
+            caller always has something to show.
+        """
+        try:
+            dt = datetime.fromtimestamp(int(locktime), tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            # Never let date formatting break the (already exceptional) flow.
+            return str(locktime)
+
+    @staticmethod
     def check_will_expired(all_inputs_min_locktime, timestamp_to_check):
         """Raise WillExpiredException if any valid transaction has expired.
 
         Locktimes are always UNIX timestamps, so a transaction is expired when
         its locktime is in the past relative to ``timestamp_to_check``.
+
+        When a will is expired the message is written to be reassuring rather
+        than alarming: being past the locktime is an EXPECTED situation that the
+        plugin handles by invalidating the old will and re-signing it. The
+        message therefore uses a shortened will id and a human-readable UTC date
+        instead of raw values.
 
         Args:
             all_inputs_min_locktime: Mapping prevout -> will-item info, used to
@@ -671,12 +719,27 @@ class Will:
                     locktime = int(wid[0][1].tx.locktime)
                     # Locktimes are always timestamps: expired when in the past.
                     if locktime < int(timestamp_to_check):
+                        # Build a clear, non-technical message: short id +
+                        # readable date, and explain what will happen next.
+                        short_id = Will._short_will_id(wid[0][0])
+                        when = Will._format_locktime(locktime)
+                        # The message is rendered as HTML by msg_warning(),
+                        # so a <br> tag forces a line break: the second
+                        # sentence goes on its own line to avoid an overly
+                        # long single line in the wizard.
                         raise WillExpiredException(
-                            f"Will Expired {wid[0][0]}: {locktime}<{timestamp_to_check}"
+                            "Will expired (id {id}, locktime {when}) \u2014<br>"
+                            "too late to anticipate, the will will be "
+                            "invalidated and re-signed.".format(
+                                id=short_id, when=when
+                            )
                         )
                     else:
-                        from datetime import datetime
-                        _logger.debug(f"Will Not Expired {wid[0][0]}: {datetime.fromtimestamp(locktime).isoformat()} > {datetime.fromtimestamp(timestamp_to_check).isoformat()}")
+                        _logger.debug(
+                            f"Will Not Expired {wid[0][0]}: "
+                            f"{Will._format_locktime(locktime)} > "
+                            f"{Will._format_locktime(timestamp_to_check)}"
+                        )
 
     # def check_all_input_spent_are_in_wallet():
     #    _logger.info("check all input spent are in wallet or valid txs")

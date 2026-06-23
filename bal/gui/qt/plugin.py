@@ -409,6 +409,14 @@ class Plugin(BalPlugin):
         # persisted NUM_REMINDERS config (default 3), with a range of 1..5.
         heir_num_reminders = BalSpinBox(self.NUM_REMINDERS, minimum=1, maximum=5)
 
+        # "No will-executor TX" checkbox. Bound to the persisted NO_WILLEXECUTOR
+        # config (default ON, see plugin_base.py), the SAME config used by the
+        # checkbox inside the "Build your will" wizard's will-executor download
+        # window, so the two stay in sync automatically. When enabled the plugin
+        # also builds a will that does not require a will-executor (e.g. it can
+        # be saved on a USB stick and a copy given to the heirs).
+        heir_no_willexecutor = BalCheckBox(self.NO_WILLEXECUTOR)
+
         # Editable line/text widgets are created once and kept in named
         # variables so the "Reset" button (Group C / C4b) can refresh the
         # displayed values after resetting the underlying config.
@@ -519,6 +527,21 @@ class Plugin(BalPlugin):
         )
         #add_widget(grid, "Bal Mode", bal_mode, 4, "choose bal mode")
 
+        # "No will-executor TX" setting. Mirrors the checkbox shown in the
+        # wizard's will-executor download window (both bound to NO_WILLEXECUTOR),
+        # so it can also be toggled from the plugin settings. Default ON.
+        add_widget(
+            grid,
+            "No will-executor TX",
+            heir_no_willexecutor,
+            8,
+            (
+                "Create a will that does not require a Will-executor; it can be "
+                "saved, for example, on a USB stick, and a copy can be given to "
+                "the heirs."
+            ),
+        )
+
         # add_widget(
         #    grid,
         #    "Ping Willexecutors",
@@ -533,32 +556,25 @@ class Plugin(BalPlugin):
         #    4,
         #    "Ask before to ping willexecutor",
         # )
-        # add_widget(
-        #    grid,
-        #    "Backup Transaction",
-        #    heir_no_willexecutor,
-        #    5,
-        #    "Add transactions without willexecutor",
-        # )
         # add_widget(grid,"Enable Multiverse(EXPERIMENTAL/BROKEN)",heir_enable_multiverse,6,"enable multiple locktimes, will import.... ")
-        grid.addWidget(heir_repush, 8, 0)
+        grid.addWidget(heir_repush, 9, 0)
         grid.addWidget(
             HelpButton(
                 "Broadcast all transactions to willexecutors including those already pushed"
             ),
-            8,
+            9,
             2,
         )
 
         # ----------------------------------------------------------------- #
         # Group C / C4b: "Reset" button that restores the dialog settings to  #
         # their factory defaults. It only resets the settings exposed by THIS #
-        # dialog (the 6 below) and refreshes the corresponding widgets so the #
+        # dialog (the ones below) and refreshes the corresponding widgets so   #
         # change is visible immediately. It deliberately does NOT touch the   #
         # wills, will-executors or any other configuration.                   #
         # ----------------------------------------------------------------- #
         def on_reset_defaults():
-            """Reset the six dialog settings to their defaults and refresh widgets.
+            """Reset the dialog settings to their defaults and refresh widgets.
 
             The default value of each setting is taken from ``BalConfig.default``
             (the third argument used when the config was created in
@@ -573,6 +589,7 @@ class Plugin(BalPlugin):
                 (self.AUTO_SIGN, heir_auto_sign, "check"),
                 (self.EDITABLE_DATES, heir_editable_dates, "check"),
                 (self.NUM_REMINDERS, heir_num_reminders, "spin"),
+                (self.NO_WILLEXECUTOR, heir_no_willexecutor, "check"),
                 (self.EVENT_SUMMARY, edit_event_summary, "line"),
                 (self.EVENT_DESCRIPTION, edit_event_description, "text"),
             ]

@@ -648,12 +648,40 @@ class BalBuildWillDialog(BalDialog):
 
                 self.bal_window.check_will()
                 for wid in Will.only_valid(self.bal_window.willitems):
-                    self.bal_window.wallet.set_label(wid, "BAL Transaction")
+                    # Label shown in Electrum's History tab for inheritance txs.
+                    self.bal_window.wallet.set_label(wid, "BAL Inheritance transaction")
                 self.msg_set_building(self.msg_ok())
             except WillExecutorNotPresent:
                 self.msg_set_status(
                     _("Will-Executor excluded"), None, _("Skipped"), self.COLOR_ERROR
                 )
+
+            except WillExpiredException as e:
+                # An expired will is an EXPECTED situation (the locktime has
+                # passed). After adding/changing an heir the will is rebuilt
+                # above (build_will), and the freshly rebuilt transactions can
+                # themselves already be expired.
+                #
+                # We must NOT trigger the wizard's automatic invalidation loop
+                # here (return None, invalidate_tx). That loop re-runs
+                # task_phase1 right after broadcasting the invalidation, but the
+                # invalidation tx is not yet visible in the mempool, so the will
+                # is still detected as expired and the user is asked to
+                # invalidate again and again (infinite loop). It also never sets
+                # the "BAL Invalidate transaction" history label.
+                #
+                # Instead we reproduce EXACTLY what the "Tools -> invalidate"
+                # menu does (BalWalletWindow.invalidate_will): open Electrum's
+                # classic transaction dialog so the user can sign and broadcast
+                # the invalidation manually, set the proper history label, and
+                # stop. This is robust regardless of mempool confirmation state.
+                #
+                # The actual call to invalidate_will() (which opens GUI windows)
+                # must run in the GUI thread, so we only RETURN a signal here
+                # ("invalidate_classic"); on_success_phase1 performs the call.
+                # We still show the expired notice as a WARNING (orange).
+                self.msg_set_building(self.msg_warning(e))
+                return "invalidate_classic", None
 
             except Exception as e:
                 self.msg_set_building(self.msg_error(e))
@@ -906,6 +934,54 @@ class BalBuildWillDialog(BalDialog):
         # if not tx:
         #    self.msg_edit_row(self.msg_error("Error, no tx was built"))
         #    return
+
+        # Special signal raised by task_phase1 when the freshly rebuilt will is
+        # already expired (e.g. an heir was added to an expired will). Instead of
+        # running the wizard's automatic invalidation loop (which would re-check
+        # before the invalidation tx reaches the mempool and loop forever), we
+        # behave exactly like the "Tools -> invalidate" menu: open Electrum's
+        # classic transaction dialog so the user signs and broadcasts the
+        # invalidation manually, with the "BAL Invalidate transaction" label.
+        # This runs in the GUI thread (on_success callback), so opening windows
+        # is safe. We then stop and close the wizard.
+        if self.have_to_sign == "invalidate_classic":
+            self.thread.stop()
+            # Design decision (window stacking + user clarity):
+            #
+            # When an heir is added to an already-expired will, the rebuilt will
+            # is itself expired and the old will must be invalidated on-chain
+            # before the new one can be used. We previously tried to open the
+            # invalidation transaction window AUTOMATICALLY from here, but doing
+            # so from within the closing wizard proved fragile: depending on the
+            # OS window manager and Qt's event ordering, the transaction window
+            # kept ending up BEHIND the main wallet window (it lost focus when
+            # the wizard closed). Neither closing-before-opening nor a deferred
+            # QTimer close() fixed it reliably on every machine.
+            #
+            # The robust solution is to NOT auto-open any window here. Instead we
+            # close the wizard and show a clear instruction telling the user to
+            # run "Tools -> Invalidate" themselves. That menu path is already
+            # known to work perfectly (its transaction window always stays in
+            # front, because no other window is closing at the same time), and
+            # it also makes the user consciously aware that they are performing a
+            # deliberate, important action (invalidating their old will).
+            #
+            # Close the wizard first so the instruction popup is the only window
+            # left, then show the guidance message.
+            self.close()
+            self.bal_window.show_message(
+                _(
+                    "Your will has expired and must be invalidated before it "
+                    "can be rebuilt.\n\n"
+                    "Please use the top-right menu Tools -> Invalidate to "
+                    "invalidate your old will: a transaction window will open "
+                    "where you can sign and broadcast the invalidation.\n\n"
+                    "After the invalidation is confirmed, press the Check "
+                    "button near Tools, to finish the will."
+                )
+            )
+            return
+
         _logger.debug("have to sign {}".format(self.have_to_sign))
         password = None
         if self.have_to_sign is None:
