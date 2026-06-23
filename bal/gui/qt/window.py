@@ -1300,6 +1300,20 @@ class BalWindow:
             self.heirs_tab.update()
             self.will_tab.update()
             self.will_list_widget.update()
+
+            # Group C / C2: re-apply the "Editable dates" setting to the date
+            # fields of the toolbars / Heirs tab. The settings checkbox calls
+            # update_all() when toggled, so this makes the change take effect
+            # immediately (same pattern as sync_hide_filters above for the
+            # "Hide Invalidated/Replaced" checkboxes). Guarded so a missing
+            # widget never breaks the rest of the refresh.
+            for _list in (self.heir_list_widget, self.will_list_widget):
+                _settings_widget = getattr(_list, "will_settings_widget", None)
+                if _settings_widget is not None:
+                    try:
+                        _settings_widget.apply_editable_dates()
+                    except Exception as _edit_err:
+                        _logger.debug(f"apply_editable_dates error: {_edit_err}")
         except Exception as e:
             _logger.error(f"error while updating window: {e}")
 

@@ -396,13 +396,42 @@ class Plugin(BalPlugin):
         # default is ON (see plugin_base.py).
         heir_auto_sign = BalCheckBox(self.AUTO_SIGN)
 
+        # Editable dates checkbox (Group C / C2). When ticked, the delivery-time
+        # and check-alive date fields become editable everywhere (toolbar /
+        # Heirs tab), not only inside the "Build your will" wizard. Bound to the
+        # persisted EDITABLE_DATES config; the default is OFF (see
+        # plugin_base.py). Changing it refreshes the open windows so the date
+        # fields immediately become editable/read-only.
+        heir_editable_dates = BalCheckBox(self.EDITABLE_DATES, on_multiverse_change)
+
+        # Editable line/text widgets are created once and kept in named
+        # variables so the "Reset" button (Group C / C4b) can refresh the
+        # displayed values after resetting the underlying config.
+        edit_calendar_app = BalLineEdit(self.CALENDAR_APP)
+        edit_event_summary = BalLineEdit(self.EVENT_SUMMARY)
+        edit_event_description = BalTextEdit(self.EVENT_DESCRIPTION)
+
         heir_repush = QPushButton("Rebroadcast transactions")
         heir_repush.clicked.connect(partial(self.broadcast_transactions, True))
         bal_mode = QComboBox()
         options = ["Easy", "Advanced", "Experimental"]
         bal_mode.addItems(options)
 
-        grid = QGridLayout(d)
+        # Group C / C4a: warning shown at the very top of the dialog, in red and
+        # bold, so the (non-technical) user is reminded not to touch these
+        # settings unless they understand them. Placed above the grid via the
+        # outer vertical layout below.
+        lbl_warning = QLabel(
+            _("Warning: change these settings only if you know what you are doing.")
+        )
+        lbl_warning.setStyleSheet("color: red; font-weight: bold;")
+        lbl_warning.setWordWrap(True)
+
+        # The grid is created WITHOUT a parent so it can be embedded inside an
+        # outer QVBoxLayout together with the warning label (top) and the
+        # Reset/support button row (bottom). Assigning ``QGridLayout(d)`` would
+        # have made the grid the dialog's only layout, leaving no room for them.
+        grid = QGridLayout()
         add_widget(
             grid,
             "Hide Replaced",
@@ -431,16 +460,28 @@ class Plugin(BalPlugin):
         )
         add_widget(
             grid,
-            "Calendar App",
-            BalLineEdit(self.CALENDAR_APP),
+            "Editable dates",
+            heir_editable_dates,
             4,
+            (
+                "When enabled, the delivery-time and check-alive date fields "
+                "can be edited everywhere (toolbar / Heirs tab), not only in "
+                "the will-building wizard.\n"
+                "When disabled, those dates are display-only outside the wizard."
+            ),
+        )
+        add_widget(
+            grid,
+            "Calendar App",
+            edit_calendar_app,
+            5,
             "Default app used to open calendar",
         )
         add_widget(
             grid,
             "Event summary",
-            BalLineEdit(self.EVENT_SUMMARY),
-            5,
+            edit_event_summary,
+            6,
             (
                 "Default message to be used in event summary\n"
                  "Variables:\n"
@@ -452,8 +493,8 @@ class Plugin(BalPlugin):
         add_widget(
             grid,
             "Event description",
-            BalTextEdit(self.EVENT_DESCRIPTION),
-            6,
+            edit_event_description,
+            7,
             (
                 "Default message to be used in event description\n"
                  "Variables:\n"
@@ -486,14 +527,86 @@ class Plugin(BalPlugin):
         #    "Add transactions without willexecutor",
         # )
         # add_widget(grid,"Enable Multiverse(EXPERIMENTAL/BROKEN)",heir_enable_multiverse,6,"enable multiple locktimes, will import.... ")
-        grid.addWidget(heir_repush, 7, 0)
+        grid.addWidget(heir_repush, 8, 0)
         grid.addWidget(
             HelpButton(
                 "Broadcast all transactions to willexecutors including those already pushed"
             ),
-            7,
+            8,
             2,
         )
+
+        # ----------------------------------------------------------------- #
+        # Group C / C4b: "Reset" button that restores the dialog settings to  #
+        # their factory defaults. It only resets the settings exposed by THIS #
+        # dialog (the 6 below) and refreshes the corresponding widgets so the #
+        # change is visible immediately. It deliberately does NOT touch the   #
+        # wills, will-executors or any other configuration.                   #
+        # ----------------------------------------------------------------- #
+        def on_reset_defaults():
+            """Reset the six dialog settings to their defaults and refresh widgets.
+
+            The default value of each setting is taken from ``BalConfig.default``
+            (the third argument used when the config was created in
+            ``plugin_base.py``), so there is a single source of truth and no
+            hard-coded duplicates here.
+            """
+            # Map each config object to the widget that displays it, so we can
+            # both reset the stored value and update what the user sees.
+            resets = [
+                (self.HIDE_REPLACED, heir_hide_replaced, "check"),
+                (self.HIDE_INVALIDATED, heir_hide_invalidated, "check"),
+                (self.AUTO_SIGN, heir_auto_sign, "check"),
+                (self.EDITABLE_DATES, heir_editable_dates, "check"),
+                (self.CALENDAR_APP, edit_calendar_app, "line"),
+                (self.EVENT_SUMMARY, edit_event_summary, "line"),
+                (self.EVENT_DESCRIPTION, edit_event_description, "text"),
+            ]
+            for cfg, widget, kind in resets:
+                # Persist the default value back into the Electrum config.
+                cfg.set(cfg.default)
+                # Refresh the widget so the reset is immediately visible. The
+                # widgets' own signal handlers will re-persist the same default
+                # value, which is harmless.
+                if kind == "check":
+                    widget.setChecked(bool(cfg.default))
+                elif kind == "line":
+                    widget.setText(cfg.default)
+                elif kind == "text":
+                    widget.setPlainText(cfg.default)
+            # Refresh the open BAL windows so any dependent view (e.g. the
+            # editable-dates state is not in this list, but hide filters are)
+            # reflects the reset values.
+            self.update_all()
+
+        btn_reset = QPushButton(_("Reset setting"))
+        btn_reset.setToolTip(_("Reset these settings to their default values"))
+        btn_reset.clicked.connect(on_reset_defaults)
+
+        # Group C / C4c: clickable support link to the project website.
+        lbl_support = QLabel(
+            '<a href="https://bitcoin-after.life"><b>bitcoin-after.life</b></a>'
+        )
+        lbl_support.setToolTip(_("Open the Bitcoin After Life support website"))
+        # Open the link in the user's browser via Electrum's helper instead of
+        # letting Qt open it directly, so it goes through Electrum's policy.
+        lbl_support.setOpenExternalLinks(False)
+        lbl_support.linkActivated.connect(
+            lambda _url: webopen("https://bitcoin-after.life")
+        )
+
+        # Bottom row: Reset on the left, support link on the right.
+        bottom_row = QHBoxLayout()
+        bottom_row.addWidget(btn_reset)
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(QLabel("<b>" + _("Support:") + "</b>"))
+        bottom_row.addWidget(lbl_support)
+
+        # Outer layout: warning (top) -> settings grid -> bottom button row.
+        outer = QVBoxLayout(d)
+        outer.addWidget(lbl_warning)
+        outer.addLayout(grid)
+        outer.addLayout(bottom_row)
 
         if ret := bool(show_modal(d)):
             try:

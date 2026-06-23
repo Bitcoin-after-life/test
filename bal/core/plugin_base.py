@@ -175,6 +175,12 @@ class BalPlugin(BasePlugin):
         # (handled by BalWindow.get_wallet_password). Default ON.
         self.AUTO_SIGN = BalConfig(config, "bal_auto_sign", True)
 
+        # EDITABLE_DATES (Group C / C2): when enabled, the delivery-time and
+        # check-alive date fields are editable everywhere (toolbar / Heirs tab),
+        # not only inside the "Build your will" wizard. Default OFF, so the dates
+        # stay display-only outside the wizard unless the user opts in.
+        self.EDITABLE_DATES = BalConfig(config, "bal_editable_dates", False)
+
         self.NO_WILLEXECUTOR = BalConfig(config, "bal_no_willexecutor", True)
         self.HIDE_REPLACED = BalConfig(config, "bal_hide_replaced", True)
         self.HIDE_INVALIDATED = BalConfig(config, "bal_hide_invalidated", True)

@@ -39,7 +39,7 @@ from electrum.gui.qt.util import (Buttons, CancelButton, ColorScheme,
                                   OkButton, TaskThread, WindowModalDialog,
                                   char_width_in_lineedit, getSaveFileName,
                                   import_meta_gui, read_QIcon_from_bytes,
-                                  read_QPixmap_from_bytes)
+                                  read_QPixmap_from_bytes, webopen)
 from electrum.i18n import _
 from electrum.logging import get_logger
 from electrum.network import BestEffortRequestFailed, Network, TxBroadcastError

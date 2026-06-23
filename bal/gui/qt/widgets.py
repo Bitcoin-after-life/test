@@ -43,6 +43,10 @@ class BalTxFeesWidget(QWidget):
         self.txfee_widget = QSpinBox(self)
         self.txfee_widget.setMinimum(1)
         self.txfee_widget.setMaximum(10000)
+        # Group C / C5: hovering the fee field explains what the number means.
+        self.txfee_widget.setToolTip(
+            _("Mining fee rate in sat/vByte used for the will transactions")
+        )
         value = (
             value
             if value
@@ -58,7 +62,14 @@ class BalTxFeesWidget(QWidget):
         #layout.addWidget(label)
         button = HelpButton(_("mining fees expressed in sats/vbyte to be used in the Bitcoin transaction.\nHigher value ensure your transaction will be confirmed"))
         button.setText("丰")
-        button.setStyleSheet("font-size: 16px;")
+        # Hover tooltip for the small "丰" help icon (the long explanation still
+        # appears on click via the HelpButton); makes the icon self-explanatory.
+        button.setToolTip(_("Miner fee, click for more information"))
+        # Enlarge only the "丰" glyph on the button itself; without scoping the
+        # rule to QPushButton it also enlarged the tooltip font (making it bigger
+        # than the other tooltips, e.g. the calendar one). Scoping it keeps the
+        # tooltip at the default size like everywhere else.
+        button.setStyleSheet("QPushButton{font-size: 16px;}")
         layout.addWidget(button)
         layout.addWidget(self.txfee_widget)
         # Expose the leading icon (prefix) and the editable field so the parent
@@ -322,6 +333,11 @@ class TimeRawEditWidget(QWidget):
         super().__init__(parent)
         self.editor = LockTimeRawEdit(parent, time_edit)
         self.label = QLabel("")
+        # Group C / C3: this trailing label shows the ABSOLUTE date computed
+        # from the RAW value (e.g. "30d" -> "2027-06-23"), so it needs room for a
+        # full "YYYY-MM-DD" string (~10 characters). Only the input box itself
+        # (LockTimeRawEdit) is narrowed; shrinking this label was a mistake that
+        # truncated the computed date.
         self.label.setFixedWidth(10 * char_width_in_lineedit())
         self.layout = QHBoxLayout(self)
         self.layout.addWidget(self.editor)
@@ -343,7 +359,11 @@ class TimeRawEditWidget(QWidget):
 class LockTimeRawEdit(QLineEdit, _LockTimeEditor):
     def __init__(self, parent=None, time_edit=None):
         QLineEdit.__init__(self, parent)
-        self.setFixedWidth(12 * char_width_in_lineedit())
+        # Group C / C3: narrow the RAW input to roughly a third of its former
+        # width. The accepted values are short relative durations such as "30d"
+        # or "1y", so a handful of characters is plenty while still leaving room
+        # for larger day counts (e.g. "3650d").
+        self.setFixedWidth(6 * char_width_in_lineedit())
         self.textChanged.connect(self.numbify)
         self.isdays = False
         self.isyears = False
@@ -554,8 +574,10 @@ class WillSettingsWidget(QWidget):
                 self.bal_window.bal_plugin.read_file("icons/calendar.png")
             )
         )
-        # Tooltip so the icon is self-explanatory when hovered.
-        self.calendar_button.setToolTip(_("Calendar"))
+        # Tooltip so the icon is self-explanatory when hovered (Group C / C5).
+        self.calendar_button.setToolTip(
+            _("Export reminder dates to your calendar (.ics)")
+        )
         self.calendar_button.clicked.connect(self.open_or_save_calendar)
         self.widgets["locktime"] = LockTimeWidget(bal_window, self)
         self.widgets["threshold"] = ThresholdTimeWidget(bal_window, self)
@@ -623,10 +645,42 @@ class WillSettingsWidget(QWidget):
             box.addWidget(calendar_row, alignment=Qt.AlignmentFlag.AlignLeft)
             box.addWidget(fees_w, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        if self.read_only:
-            self.widgets["locktime"].set_read_only(True)
-            self.widgets["threshold"].set_read_only(True)
-            self.widgets["baltx_fees"].set_read_only(True)
+        # Group C / C2: apply the current "Editable dates" setting to the date
+        # fields. Done once at creation here, and re-applied later by
+        # apply_editable_dates() whenever the setting changes (called from
+        # BalWindow.update_all()), so toggling the checkbox takes effect
+        # immediately, exactly like the "Hide Invalidated" filter does.
+        self.apply_editable_dates()
+
+    def apply_editable_dates(self):
+        """Re-read the EDITABLE_DATES setting and lock/unlock the date fields.
+
+        Outside the "Build your will" wizard (``read_only=True``) the
+        delivery-time and check-alive dates are display-only by default. When
+        the user ticks "Editable dates" in the settings they become editable
+        here too. The fee field always stays read-only outside the wizard,
+        because C2 only concerns the dates.
+
+        This is safe to call repeatedly: it only adjusts the read-only state of
+        the already-created sub-widgets, it does not rebuild anything. It is the
+        per-update hook that lets the settings checkbox take effect without
+        having to recreate the toolbar / re-open the window.
+        """
+        # Inside the wizard the dates are always editable; nothing to do.
+        if not self.read_only:
+            return
+
+        editable_dates = False
+        try:
+            editable_dates = self.bal_window.bal_plugin.EDITABLE_DATES.get()
+        except Exception:
+            # If the setting cannot be read, fall back to the safe default
+            # (dates remain read-only outside the wizard).
+            editable_dates = False
+
+        self.widgets["locktime"].set_read_only(not editable_dates)
+        self.widgets["threshold"].set_read_only(not editable_dates)
+        self.widgets["baltx_fees"].set_read_only(True)
 
     def create_alarms(self, alarm_start, alarm_end):
         days = (alarm_end - alarm_start).days+1

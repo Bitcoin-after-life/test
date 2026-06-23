@@ -378,3 +378,134 @@ MEMPOOL (yellow `#ffce30`).
 - Full test suite: `206 passed`.
 
 **Outcome:** DONE.
+
+## 7. Group C - Settings-dialog improvements (editable dates, narrower RAW box, warning/reset/support, tooltips, bold locktime)
+
+**Context / request:**
+Group C bundles several usability improvements to the BAL settings dialog and
+the will views, implemented together and delivered in a single ZIP.
+
+**What changed (C2 - "Editable dates" option):**
+
+- `bal/core/plugin_base.py`
+  - New persisted config `EDITABLE_DATES = BalConfig(config, "bal_editable_dates",
+    False)` (default OFF).
+
+- `bal/gui/qt/widgets.py`
+  - `WillSettingsWidget.__init__` reads `EDITABLE_DATES`. When OFF (default) the
+    delivery-time and check-alive date fields stay display-only outside the
+    "Build your will" wizard; when ON they become editable in the toolbar /
+    Heirs tab. The fee field remains read-only outside the wizard.
+
+- `bal/gui/qt/plugin.py`
+  - New "Editable dates" checkbox in the settings dialog, bound to
+    `EDITABLE_DATES`, with an explanatory tooltip. Toggling it refreshes the
+    open windows so the date fields immediately reflect the new state.
+
+**What changed (C3 - narrower RAW date box):**
+
+- `bal/gui/qt/widgets.py`
+  - `LockTimeRawEdit` width reduced from `12 * char_width_in_lineedit()` to
+    `6 *` (roughly a third), enough for short relative values such as `30d` /
+    `1y` while still fitting larger day counts.
+  - `TimeRawEditWidget`'s trailing (empty) label shrunk from `10 *` to `2 *`
+    character widths, removing the wasted blank space.
+
+**What changed (C4 - warning, reset, support link):**
+
+- `bal/gui/qt/plugin.py`
+  - (a) Warning shown in bold red at the TOP of the dialog:
+    "Warning: change these settings only if you know what you are doing."
+  - (b) "Reset" button that restores the six dialog settings (Hide Replaced,
+    Hide Invalidated, Auto-sign, Calendar App, Event summary, Event description)
+    to their factory defaults, taking each default from `BalConfig.default`
+    (single source of truth) and refreshing the widgets. It does NOT touch
+    wills, will-executors or any other configuration.
+  - (c) Clickable support link to `https://bitcoin-after.life`, opened via
+    Electrum's `webopen` helper.
+  - The dialog now uses an outer vertical layout (warning -> settings grid ->
+    Reset/support row); the settings grid is unchanged apart from the new row.
+
+- `bal/gui/qt/common.py`
+  - Imported `webopen` from `electrum.gui.qt.util` (re-exported for the dialog).
+
+**What changed (C5 - clearer tooltips):**
+
+- `bal/gui/qt/widgets.py`
+  - Calendar button tooltip: "Export reminder dates to your calendar (.ics)".
+  - Fee field tooltip: "Mining fee rate in sat/vByte used for the will
+    transactions".
+
+**What changed (C6 - bold Locktime column):**
+
+- `bal/gui/qt/lists.py`
+  - In `PreviewList.replace()` the Locktime column item is now rendered in bold
+    (via its own `QFont`), so the delivery time stands out in the list. The rest
+    of the list is intentionally left unchanged.
+
+- `tests/test_group_c_settings.py` (new)
+  - Verifies `EDITABLE_DATES` defaults OFF and can be toggled/persisted, and
+    that the Reset logic restores all six dialog settings to their defaults
+    without touching unrelated configuration.
+
+**Verification:**
+- `ruff check` on changed Python files: no new errors introduced (the new test
+  file is ruff-clean; the only added import flagged by ruff is the re-export
+  `webopen`, matching the existing star-import pattern in `common.py`).
+- Full test suite: `210 passed` (206 previous + 4 new Group C tests).
+
+**Outcome:** DONE (delivered as a ZIP for user testing before commit).
+
+### Group C - follow-up fixes (after first user test)
+
+- **C2 (Editable dates) now takes effect immediately and is reset.**
+  - `bal/gui/qt/widgets.py`: extracted the date-locking logic into
+    `WillSettingsWidget.apply_editable_dates()`, which re-reads `EDITABLE_DATES`
+    and locks/unlocks the delivery-time and check-alive fields (fee stays
+    read-only). Called from `__init__` and re-callable afterwards.
+  - `bal/gui/qt/window.py`: `update_all()` now calls `apply_editable_dates()` on
+    the Heirs-tab and Will-tab settings widgets. Since the "Editable dates"
+    checkbox already triggers `update_all()`, toggling it now updates the date
+    fields instantly (same mechanism as the "Hide Invalidated" filter).
+  - `bal/gui/qt/plugin.py`: added `EDITABLE_DATES` (and its checkbox) to the
+    "Reset setting" list, so Reset also returns it to its default (OFF).
+
+- **C3: fixed the broken date next to the RAW box.**
+  - `bal/gui/qt/widgets.py`: the trailing label in `TimeRawEditWidget` shows the
+    ABSOLUTE date computed from the RAW value (e.g. "30d" -> "2027-06-23").
+    Its width was wrongly shrunk to 2 characters, truncating that date; it is
+    restored to 10 characters. Only the RAW input box stays narrowed (6 chars).
+
+- **C4b:** the reset button label is now "Reset setting".
+- **C4c:** the support link text `bitcoin-after.life` is now shown in bold.
+
+- `tests/test_group_c_settings.py`: the reset test now also covers
+  `EDITABLE_DATES` (seven settings restored to default, flag back OFF).
+
+**Verification (follow-up):** `ruff` clean on changed files; full suite
+`210 passed`.
+
+### Group C - second follow-up (after second user test)
+
+- **Fee icon tooltip (C5):** the small "丰" help icon next to the fee field now
+  shows the hover tooltip "Miner fee, click for more information" (the longer
+  explanation still appears on click via the HelpButton).
+- **C4c:** the word "Support:" before the link is now also shown in bold (not
+  only the link text).
+- **"Editable inheritance" Raw/Date default:** confirmed the existing behaviour
+  is "remember the user's last choice" (the Raw/Date combo selection is
+  persisted in `WILL_SETTINGS` whenever it changes), so no code change was
+  needed - the dialog reopens on whichever mode the user last used.
+
+**Verification (second follow-up):** `ruff` clean on changed files; full suite
+`210 passed`.
+
+### Group C - third follow-up (tooltip font fix)
+
+- **Fee icon tooltip font:** the "丰" button used an unscoped
+  `font-size: 16px` stylesheet that also enlarged its tooltip, making it bigger
+  than the other tooltips (e.g. the calendar one). The rule is now scoped to
+  `QPushButton{...}`, so only the glyph stays large while the tooltip uses the
+  default font size like the others.
+
+**Verification (third follow-up):** full suite `210 passed`.

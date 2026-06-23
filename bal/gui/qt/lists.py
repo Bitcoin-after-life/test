@@ -403,6 +403,16 @@ class PreviewList(MyTreeView, MessageBoxMixin):
 
             items[-1].setBackground(QColor(status_color(bal_tx)))
 
+        # Group C / C6: emphasise the Locktime column by rendering it in bold,
+        # so the delivery time stands out at a glance in the list.
+        try:
+            locktime_item = items[self.Columns.LOCKTIME]
+            bold_font = locktime_item.font()
+            bold_font.setBold(True)
+            locktime_item.setFont(bold_font)
+        except Exception as bold_err:
+            _logger.debug(f"locktime bold error: {bold_err}")
+
         # Tooltip on the Server column: shows the will-executor URL (if any)
         # plus the current server state, so the user can always inspect details.
         try:
