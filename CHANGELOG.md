@@ -509,3 +509,76 @@ the will views, implemented together and delivered in a single ZIP.
   default font size like the others.
 
 **Verification (third follow-up):** full suite `210 passed`.
+
+## 8. Group D / D1 - Configurable, distributed calendar reminders and save-only .ics
+
+**Context / request:**
+The exported calendar (.ics) used to add one reminder (VALARM) for every single
+day of the check-alive period (potentially hundreds), and tried to open the file
+with a calendar app. Group D D1 makes the number of reminders configurable
+(default 3, max 5), spreads them across the period before the deadline, and
+changes the calendar button to simply SAVE the .ics file (asking the user where,
+starting on the Desktop) instead of opening it. (D2 was intentionally skipped.)
+
+**What changed (D1 - number of reminders):**
+
+- `bal/core/plugin_base.py`
+  - New persisted config `NUM_REMINDERS = BalConfig(config, "bal_num_reminders",
+    3)` (default 3).
+
+- `bal/gui/qt/widgets.py`
+  - New `BalSpinBox` widget: an integer spin box bound to a `BalConfig`
+    (mirrors `BalCheckBox` / `BalLineEdit`), with a clamped range.
+  - New pure helper `compute_reminder_offsets(days, count)`: returns the
+    reminder offsets (in days before the deadline) spread uniformly across the
+    period. Every offset is >= 1 (reminders always fall before the deadline),
+    at most one reminder per available day (`min(count, days)`), de-duplicated,
+    sorted earliest-first. Examples: `(30, 3) -> [30, 16, 1]`,
+    `(2, 3) -> [2, 1]`, `(1, 3) -> [1]`, `(0, 3) -> []`.
+  - `create_alarms()` rewritten to read `NUM_REMINDERS`, use
+    `compute_reminder_offsets`, and emit one VALARM per offset (with a
+    DESCRIPTION reminder text, previously commented out).
+
+- `bal/gui/qt/plugin.py`
+  - New "Number of reminders" spin box in the settings dialog (range 1..5,
+    default 3), with an explanatory tooltip, also included in the "Reset
+    setting" list (resets back to 3).
+
+**What changed (D1b - save-only .ics, ask where, default to Desktop):**
+
+- `bal/gui/qt/calendar.py`
+  - New `BalCalendar.desktop_dir()` helper returning the user's Desktop
+    (`~/Desktop` when present, otherwise the home directory).
+
+- `bal/gui/qt/widgets.py`
+  - `open_or_save_calendar()` no longer tries to open the file with a calendar
+    app. It always opens a "save as" dialog (via `getSaveFileName`) with an
+    `.ics` filter, default filename `will_event.ics`, starting on the Desktop,
+    then copies the generated file to the chosen path and shows a confirmation
+    message. The unused `save_to_cwd` was replaced by `save_ics_to(target)`.
+  - The "Calendar App" setting is left in place (now unused) as requested.
+
+- `tests/test_group_d_alarms.py` (new)
+  - Verifies `NUM_REMINDERS` default/change and all the distribution rules of
+    `compute_reminder_offsets` (spread, before-deadline, one-per-day cap, empty
+    when no room, never exceeding the requested count, single-reminder case).
+
+**Verification:**
+- `ruff check` on changed files: no new errors (new test file is ruff-clean).
+- Full test suite: `217 passed` (210 previous + 7 new Group D tests).
+
+**Outcome:** DONE (delivered as a ZIP for user testing before commit).
+
+### Group D - follow-up ("Calendar App" removed from settings)
+
+- `bal/gui/qt/plugin.py`: removed the "Calendar App" field from the settings
+  dialog (and from the "Reset setting" list). Since the calendar button now only
+  SAVES the .ics file (it no longer opens it with an external app), the setting
+  was no longer needed. The `CALENDAR_APP` config and the `open_with_default_app`
+  helper are left in the codebase (unused, harmless) to avoid touching unrelated
+  code.
+- The .ics "save as" behaviour is identical on Windows, Linux and macOS (always
+  starts on the user's Desktop, with a home-directory fallback); no per-OS
+  branching.
+
+**Verification (follow-up):** full suite `217 passed`.

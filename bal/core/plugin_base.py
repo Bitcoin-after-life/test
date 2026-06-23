@@ -181,6 +181,14 @@ class BalPlugin(BasePlugin):
         # stay display-only outside the wizard unless the user opts in.
         self.EDITABLE_DATES = BalConfig(config, "bal_editable_dates", False)
 
+        # NUM_REMINDERS (Group D / D1): how many reminder alarms (VALARM) the
+        # exported .ics calendar event should contain. The reminders are spread
+        # uniformly across the check-alive period and always fall BEFORE the
+        # delivery deadline. Default 3; the settings dialog caps it at 5 and the
+        # alarm builder additionally limits it to at most one alarm per available
+        # day.
+        self.NUM_REMINDERS = BalConfig(config, "bal_num_reminders", 3)
+
         self.NO_WILLEXECUTOR = BalConfig(config, "bal_no_willexecutor", True)
         self.HIDE_REPLACED = BalConfig(config, "bal_hide_replaced", True)
         self.HIDE_INVALIDATED = BalConfig(config, "bal_hide_invalidated", True)

@@ -23,6 +23,58 @@ from .common import _, _logger  # underscore names are not re-exported by "impor
 from .calendar import BalCalendar
 
 
+def compute_reminder_offsets(days, count):
+    """Return the reminder offsets (in days BEFORE the deadline) for an .ics event.
+
+    Group D / D1. The reminders are spread uniformly across the check-alive
+    period and always fall *before* the delivery deadline, i.e. every returned
+    offset is ``>= 1`` (a reminder exactly on the deadline would be useless).
+
+    Rules:
+        * ``count`` is the requested number of reminders (the settings dialog
+          caps it at 5, default 3).
+        * at most ONE reminder per available day: the effective number is
+          ``min(count, days)``;
+        * with ``days`` available days, offsets are chosen as evenly spaced
+          points inside ``[1, days]`` (1 = the day before the deadline, ``days``
+          = the first day of the period), de-duplicated and returned sorted
+          descending (earliest reminder first).
+
+    Args:
+        days: number of whole days between check-alive and the deadline.
+        count: requested number of reminders.
+
+    Returns:
+        A list of integer day-offsets (each ``>= 1``), e.g. ``[22, 15, 8]`` for
+        ``days=30, count=3``. Empty if there is no room for any reminder.
+    """
+    # No room for any reminder (deadline today or already passed).
+    if days < 1 or count < 1:
+        return []
+
+    # Never more reminders than available days (one per day at most).
+    effective = min(int(count), int(days))
+
+    # A single reminder: put it one day before the deadline.
+    if effective == 1:
+        return [1]
+
+    # Spread "effective" points evenly inside [1, days]. Using i/(effective-1)
+    # for i in 0..effective-1 gives fractions 0..1; map them onto [1, days].
+    # This places the first reminder at the start of the period (offset ~days)
+    # and the last one one day before the deadline (offset 1).
+    offsets = set()
+    for i in range(effective):
+        frac = i / (effective - 1)  # 0.0 .. 1.0
+        # offset = days at frac 0 (start), 1 at frac 1 (just before deadline).
+        offset = round(days - frac * (days - 1))
+        offset = max(1, min(days, offset))
+        offsets.add(offset)
+
+    # Sorted descending: earliest reminder (largest offset) first.
+    return sorted(offsets, reverse=True)
+
+
 class ClickableLabel(QLabel):
     doubleClicked = pyqtSignal()
 
@@ -683,15 +735,45 @@ class WillSettingsWidget(QWidget):
         self.widgets["baltx_fees"].set_read_only(True)
 
     def create_alarms(self, alarm_start, alarm_end):
-        days = (alarm_end - alarm_start).days+1
+        """Build the VALARM reminder blocks for the .ics event (Group D / D1).
+
+        The number of reminders is read from the NUM_REMINDERS setting (default
+        3, capped at 5 by the settings dialog). They are spread uniformly across
+        the check-alive period and always fall before the delivery deadline; if
+        the period is shorter than the requested number, at most one reminder
+        per day is produced (see compute_reminder_offsets).
+
+        Args:
+            alarm_start: the check-alive datetime (start of the period).
+            alarm_end: the delivery-time / locktime datetime (the deadline).
+
+        Returns:
+            A list of .ics text lines (possibly empty) describing the VALARMs.
+        """
+        days = (alarm_end - alarm_start).days
+
+        # How many reminders the user asked for (default 3 if unreadable).
+        try:
+            count = int(self.bal_window.bal_plugin.NUM_REMINDERS.get())
+        except Exception:
+            count = 3
+
+        offsets = compute_reminder_offsets(days, count)
+
+        # Reminder text shown by the calendar app when each alarm fires.
+        description = _(
+            "BAL reminder: check in before your will is delivered to your heirs."
+        )
+
         lines = []
-        for i in range(1, days):
+        for offset in offsets:
             lines.extend(
                 [
                     "BEGIN:VALARM",
-                    f"TRIGGER;RELATED=END:-P{i}D",
+                    # Fire "offset" days before the event end (the deadline).
+                    f"TRIGGER;RELATED=END:-P{offset}D",
                     "ACTION:DISPLAY",
-                    # f"DESCRIPTION:{self.bal_window.bal_plugin.ALARM_DESCRIPTION.get()}",
+                    f"DESCRIPTION:{BalCalendar.ical_escape(description)}",
                     "END:VALARM",
                 ]
             )
@@ -704,7 +786,6 @@ class WillSettingsWidget(QWidget):
         threshold = self.widgets["threshold"].alarm
         alarm_end = BalCalendar.format_time(locktime)
         alarm_start = BalCalendar.format_time(threshold)
-        days_difference = (locktime - threshold).days
 
         heirs_details = "\r\n".join(f" {heir} - {self.bal_window.heirs[heir][0]}, {self.bal_window.heirs[heir][1]}" for heir in self.bal_window.heirs)
         event_description = BalCalendar.ical_escape(
@@ -735,23 +816,54 @@ class WillSettingsWidget(QWidget):
 
         lines = [s.rstrip("\r\n") for s in lines]
         ics_content = "\r\n".join(lines) + "\r\n"
+        # Keep the generated .ics in a temp file; it is copied to the path the
+        # user picks below.
         self.temp_path = BalCalendar.write_temp_ics(ics_content)
-        opened = BalCalendar.open_with_default_app(
-            self.bal_window.bal_plugin.CALENDAR_APP.get(), self.temp_path
+
+        # Group D / D1b: always ask the user WHERE to save the .ics file (the
+        # plugin no longer tries to open it with a calendar app). The save
+        # dialog opens on the user's Desktop by default, with an .ics filter and
+        # a sensible default filename.
+        desktop = BalCalendar.desktop_dir()
+        default_path = os.path.join(desktop, "will_event.ics")
+        target = getSaveFileName(
+            parent=self.bal_window.window,
+            title=_("Save calendar reminder (.ics)"),
+            # An absolute filename makes getSaveFileName ignore its remembered
+            # IO_DIRECTORY and open on the Desktop instead.
+            filename=default_path,
+            filter="iCalendar (*.ics);;All files (*)",
+            default_extension="ics",
+            config=self.bal_window.window.config,
         )
-        if opened:
-            _logger.info(f"File opened with default app: {self.temp_path}")
-        else:
-            export_meta_gui(
-                self.bal_window.window, f"will_event.ics",self.save_to_cwd
-
+        if not target:
+            # User cancelled the save dialog: nothing to do.
+            return
+        try:
+            self.save_ics_to(target)
+        except Exception as save_err:
+            _logger.error(f"saving .ics failed: {save_err}")
+            self.bal_window.show_warning(
+                _("Could not save the calendar file: {}").format(save_err)
             )
+            return
+        self.bal_window.show_message(
+            _("Calendar file saved to:\n{}").format(target)
+        )
 
+    def save_ics_to(self, target):
+        """Copy the generated .ics from the temp file to ``target`` (Group D / D1b).
 
-    def save_to_cwd(self,filename="event.ics"):
-        target = os.path.abspath(filename)
-        # se il file esiste, sovrascrive
-        _logger.debug(f"save_to_cwd {self.temp_path},{filename}")
+        Overwrites the destination if it already exists. Used by
+        open_or_save_calendar after the user picks a save location.
+
+        Args:
+            target: absolute destination path chosen by the user.
+
+        Returns:
+            The destination path.
+        """
+        _logger.debug(f"save_ics_to {self.temp_path} -> {target}")
         with open(self.temp_path, "rb") as src, open(target, "wb") as dst:
             dst.write(src.read())
         return target
@@ -882,6 +994,43 @@ class BalCheckBox(QCheckBox):
                 self.on_click()
 
         self.stateChanged.connect(on_check)
+
+
+class BalSpinBox(QSpinBox):
+    """Integer spin box bound to a BalConfig value (Group D / D1).
+
+    Mirrors BalCheckBox / BalLineEdit: it shows the persisted value on creation
+    and writes the new value back to the config whenever the user changes it.
+
+    Args:
+        variable: the BalConfig accessor to read from / write to.
+        minimum: smallest selectable value (default 1).
+        maximum: largest selectable value (default 5, used by "Number of
+            reminders").
+        on_change: optional callback invoked after the value is persisted.
+    """
+
+    def __init__(self, variable, minimum=1, maximum=5, on_change=None):
+        QSpinBox.__init__(self)
+        self.setMinimum(minimum)
+        self.setMaximum(maximum)
+        # Coerce the stored value to int and clamp it into the allowed range,
+        # so a stale/invalid config value can never push the spin box out of
+        # bounds.
+        try:
+            current = int(variable.get())
+        except Exception:
+            current = minimum
+        current = max(minimum, min(maximum, current))
+        self.setValue(current)
+        self.on_change = on_change
+
+        def on_value_changed(v):
+            variable.set(int(v))
+            if self.on_change:
+                self.on_change()
+
+        self.valueChanged.connect(on_value_changed)
 
 
 

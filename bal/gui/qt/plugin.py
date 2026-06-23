@@ -19,7 +19,7 @@ from electrum.gui.qt.main_window import StatusBarButton
 from .common import *
 from .common import _, _logger  # underscore names are not re-exported by "import *"
 from .common import read_QIcon_from_bytes
-from .widgets import BalCheckBox, BalLineEdit, BalTextEdit
+from .widgets import BalCheckBox, BalLineEdit, BalSpinBox, BalTextEdit
 from .window import BalWindow
 from .dialogs import BalDialog
 
@@ -404,10 +404,17 @@ class Plugin(BalPlugin):
         # fields immediately become editable/read-only.
         heir_editable_dates = BalCheckBox(self.EDITABLE_DATES, on_multiverse_change)
 
+        # Number of reminders spin box (Group D / D1). Sets how many reminder
+        # alarms the exported .ics calendar event contains. Bound to the
+        # persisted NUM_REMINDERS config (default 3), with a range of 1..5.
+        heir_num_reminders = BalSpinBox(self.NUM_REMINDERS, minimum=1, maximum=5)
+
         # Editable line/text widgets are created once and kept in named
         # variables so the "Reset" button (Group C / C4b) can refresh the
         # displayed values after resetting the underlying config.
-        edit_calendar_app = BalLineEdit(self.CALENDAR_APP)
+        # Note: the "Calendar App" field was removed (Group D follow-up) because
+        # the calendar button now only SAVES the .ics file instead of opening it
+        # with an external app, so the setting is no longer needed in the dialog.
         edit_event_summary = BalLineEdit(self.EVENT_SUMMARY)
         edit_event_description = BalTextEdit(self.EVENT_DESCRIPTION)
 
@@ -472,10 +479,17 @@ class Plugin(BalPlugin):
         )
         add_widget(
             grid,
-            "Calendar App",
-            edit_calendar_app,
+            "Number of reminders",
+            heir_num_reminders,
             5,
-            "Default app used to open calendar",
+            (
+                "How many reminder alarms the exported calendar (.ics) event "
+                "contains.\n"
+                "The reminders are spread across the check-alive period and "
+                "always fall before the delivery deadline.\n"
+                "If the period is shorter than the requested number, at most "
+                "one reminder per day is used. Range: 1 to 5 (default 3)."
+            ),
         )
         add_widget(
             grid,
@@ -558,7 +572,7 @@ class Plugin(BalPlugin):
                 (self.HIDE_INVALIDATED, heir_hide_invalidated, "check"),
                 (self.AUTO_SIGN, heir_auto_sign, "check"),
                 (self.EDITABLE_DATES, heir_editable_dates, "check"),
-                (self.CALENDAR_APP, edit_calendar_app, "line"),
+                (self.NUM_REMINDERS, heir_num_reminders, "spin"),
                 (self.EVENT_SUMMARY, edit_event_summary, "line"),
                 (self.EVENT_DESCRIPTION, edit_event_description, "text"),
             ]
@@ -570,6 +584,8 @@ class Plugin(BalPlugin):
                 # value, which is harmless.
                 if kind == "check":
                     widget.setChecked(bool(cfg.default))
+                elif kind == "spin":
+                    widget.setValue(int(cfg.default))
                 elif kind == "line":
                     widget.setText(cfg.default)
                 elif kind == "text":
