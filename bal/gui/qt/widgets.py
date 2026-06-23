@@ -560,12 +560,18 @@ class ThresholdTimeWidget(BalTimeEditWidget):
     # rich_text=True is used by the HelpButton, so HTML tags (<b>, <br>) render.
     help_text = (
         "<b>CHECK ALIVE</b><br><br>"
-        "Check to ask for invalidation.<br><br>"
-        "When less then this time is missing, ask to invalidate.<br>"
+        "In DATA mode:<br>"
+        "set the date for the \u201ccheck alive\u201d parameter.<br>"
+        "When you open the wallet, if the \u201ccheck alive\u201d date has passed, "
+        "the plugin will ask if you want to postpone the inheritance, since it "
+        "assumes you still have control of the wallet and that you are still "
+        "alive.<br><br>"
+        "In RAW mode:<br>"
+        "When less than this time is missing, ask to invalidate.<br>"
         "If you fail to invalidate during this time, your transactions will be delivered to your heirs.<br><br>"
         "if you choose Raw, you can insert various options based on suffix:<br>"
         " - d: number of days after current day(ex: 1d means tomorrow)<br>"
-        " - y: number of years after currrent day(ex: 1y means one year from today)<br>"
+        " - y: number of years after current day(ex: 1y means one year from today)<br>"
     )
     label_text = "🚨"
     #label_text = "Check Alive"

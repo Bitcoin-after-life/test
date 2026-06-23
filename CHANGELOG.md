@@ -756,3 +756,31 @@ produce fewer events (at most one per day).
 
 **Outcome:** DONE (delivered as a test ZIP v0.3.7 for the user to try before
 commit).
+
+## 14. Check-alive help text: DATA/RAW explanation and two typo fixes
+
+**Request:** rewrite the text inside the CHECK ALIVE help popup to explain both
+the DATA mode and the RAW mode, while keeping the **CHECK ALIVE** title in bold.
+
+**What changed:**
+- `bal/gui/qt/widgets.py`
+  - Updated `ThresholdTimeWidget.help_text` with the new wording:
+    - kept `<b>CHECK ALIVE</b>` bold;
+    - added a **DATA mode** paragraph (set the check-alive date; on wallet open,
+      if the date has passed, the plugin asks whether to postpone the
+      inheritance, assuming the user is still alive and in control);
+    - added a **RAW mode** paragraph (when less than this time is missing, ask
+      to invalidate; failing to invalidate in time delivers the transactions to
+      the heirs);
+    - kept the existing "d / y suffix" explanation.
+  - Fixed two typos in this help text: "less then" -> "less **than**", and
+    "currrent" -> "**current**" (only within the CHECK ALIVE help text).
+
+**Verification:**
+- `py_compile` on the changed file: OK.
+- `ruff check`: no new errors (only the pre-existing star-import noise and the
+  pre-existing F841 at line 547).
+- Full test suite: `239 passed`.
+
+**Outcome:** DONE (delivered as a test ZIP v0.3.8 for the user to try before
+commit).
