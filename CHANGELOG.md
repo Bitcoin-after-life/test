@@ -678,3 +678,34 @@ change takes effect immediately (the method is already re-run from
 
 **Outcome:** DONE (delivered together with fix #10 in a single ZIP for user
 testing before commit).
+
+## 12. Translated the refactoring docs to English and renamed two of them
+
+**Request:** per rule R1 (all output, including documentation, must be in
+English), translate the remaining Italian documentation files. The user also
+asked to translate the file *names* of two of them.
+
+**What changed:**
+- `CHANGELOG_REFACTOR.md`
+  - Translated sections 1-16 (the whole report header plus §1-§16) from Italian
+    to English. Sections 17-18 were already in English and were left untouched.
+  - All technical content was preserved verbatim: code blocks, commit hashes,
+    tables, file/class/method names, version numbers and structure.
+  - Updated the §12 history line to mention the new name of the diagnosis file
+    (`GUI_DIAGNOSIS.md`, originally `DIAGNOSI_GUI.md`).
+- `DIAGNOSI_GUI.md` → renamed to `GUI_DIAGNOSIS.md` (via `git mv`) and fully
+  translated to English, **title included**. All code blocks, line references,
+  severity emojis, tables and structure were preserved.
+- `REPORT_NETWORKING_PARALLELO.md` → renamed to `PARALLEL_NETWORKING_REPORT.md`
+  (via `git mv`). Its content was already in English, so only the file name was
+  translated.
+
+**Verification:**
+- Scanned the translated regions for leftover Italian words: none found (only
+  English false-positives from the regex).
+- Confirmed sections 17-18 of `CHANGELOG_REFACTOR.md` are unchanged
+  (the diff hunks stop before §17).
+- Confirmed no other file in the repo still references the old file names.
+
+**Outcome:** DONE (documentation-only change; no plugin code touched, so the
+zip-first step does not apply).

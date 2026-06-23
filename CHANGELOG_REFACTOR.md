@@ -1,66 +1,66 @@
-# BAL — Resoconto del refactoring (per l'autore originale)
+# BAL — Refactoring report (for the original author)
 
-Questo documento elenca **tutte** le modifiche apportate al plugin BAL
-(Bitcoin After Life) rispetto alla versione originale `0.2.8`.
+This document lists **all** the changes made to the BAL plugin
+(Bitcoin After Life) with respect to the original version `0.2.8`.
 
-**Principio guida:** refactoring **conservativo e a comportamento invariato**
-(Approccio A). La logica di business è stata mantenuta **byte-identica** dove
-possibile; sono cambiati soprattutto la **disposizione dei file** e gli
-**import**. Nessuna riscrittura algoritmica.
+**Guiding principle:** **conservative, behaviour-preserving** refactoring
+(Approach A). The business logic was kept **byte-identical** where possible;
+what changed are mainly the **file layout** and the **imports**. No algorithmic
+rewrite.
 
-Ambiente di verifica: **Electrum 4.7.2** + **PyQt6** (l'ultima release stabile
-che espone `json_db.register_dict`).
+Verification environment: **Electrum 4.7.2** + **PyQt6** (the latest stable
+release that exposes `json_db.register_dict`).
 
 ---
 
-## 1. Riorganizzazione della struttura (separazione logica / GUI)
+## 1. Structure reorganization (logic / GUI separation)
 
-Il problema principale segnalato era che la logica e la grafica erano
-mescolate, in particolare in un unico file `qt.py` da **4131 righe**.
+The main reported problem was that logic and graphics were mixed together, in
+particular in a single `qt.py` file of **4131 lines**.
 
-### Struttura PRIMA (flat, 7 file)
+### Structure BEFORE (flat, 7 files)
 ```
 BAL/
-├── __init__.py        (vuoto, 0 righe)
-├── bal.py             (243)  logica + plugin base
-├── util.py            (533)  helper
-├── heirs.py           (791)  modello eredi + costruzione tx
-├── will.py            (927)  modello will/WillItem
-├── willexecutors.py   (374)  networking will-executor
-├── qt.py              (4131) TUTTA la GUI + il Plugin in un solo file
+├── __init__.py        (empty, 0 lines)
+├── bal.py             (243)  logic + plugin base
+├── util.py            (533)  helpers
+├── heirs.py           (791)  heirs model + tx building
+├── will.py            (927)  will/WillItem model
+├── willexecutors.py   (374)  will-executor networking
+├── qt.py              (4131) ALL the GUI + the Plugin in a single file
 └── bal_resources.py   (14)
 ```
 
-### Struttura DOPO (core/ vs gui/)
+### Structure AFTER (core/ vs gui/)
 ```
 bal/
-├── manifest.json            metadati conformi allo standard
-├── qt.py                    shim di caricamento (re-export di Plugin)
-├── __init__.py              docstring di architettura + __version__
-├── core/                    LOGICA senza dipendenze Qt
-│   ├── util.py              (ex util.py)
-│   ├── plugin_base.py       (ex bal.py)
-│   ├── heirs.py             (ex heirs.py)
-│   ├── will.py              (ex will.py)
-│   └── willexecutors.py     (ex willexecutors.py)
-└── gui/qt/                  PRESENTAZIONE PyQt6
-    ├── theme.py      (59)   mappatura stato → colore
-    ├── common.py     (155)  import condivisi + helper GUI
-    ├── widgets.py    (782)  widget "foglia"
+├── manifest.json            standard-compliant metadata
+├── qt.py                    loading shim (re-export of Plugin)
+├── __init__.py              architecture docstring + __version__
+├── core/                    LOGIC with no Qt dependencies
+│   ├── util.py              (was util.py)
+│   ├── plugin_base.py       (was bal.py)
+│   ├── heirs.py             (was heirs.py)
+│   ├── will.py              (was will.py)
+│   └── willexecutors.py     (was willexecutors.py)
+└── gui/qt/                  PyQt6 PRESENTATION
+    ├── theme.py      (59)   status → colour mapping
+    ├── common.py     (155)  shared imports + GUI helpers
+    ├── widgets.py    (782)  "leaf" widgets
     ├── calendar.py   (80)   BalCalendar
-    ├── dialogs.py    (1127) finestre di dialogo
-    ├── lists.py      (957)  viste ad albero (eredi/preview/executor)
-    ├── window.py     (952)  controller GUI per-wallet (BalWindow)
-    └── plugin.py     (273)  classe Plugin (@hook Electrum → GUI)
+    ├── dialogs.py    (1127) dialog windows
+    ├── lists.py      (957)  tree views (heirs/preview/executor)
+    ├── window.py     (952)  per-wallet GUI controller (BalWindow)
+    └── plugin.py     (273)  Plugin class (@hook Electrum → GUI)
 ```
 
-Il file `qt.py` da 4131 righe è stato suddiviso per **responsabilità**. I
-**corpi delle classi sono stati copiati verbatim** (riga per riga) per non
-toccare la logica delicata delle transazioni di eredità.
+The 4131-line `qt.py` file was split by **responsibility**. The **class bodies
+were copied verbatim** (line by line) so as not to touch the delicate
+inheritance-transaction logic.
 
-### Mappa: dove sono finite le 40 classi/funzioni di `qt.py`
+### Map: where the 40 classes/functions of `qt.py` ended up
 
-| Classe/funzione (riga orig.)        | Nuovo modulo            |
+| Class/function (orig. line)         | New module              |
 |-------------------------------------|-------------------------|
 | `Plugin` (67)                       | `gui/qt/plugin.py`      |
 | `shown_cv` (317)                    | `gui/qt/common.py`      |
@@ -104,257 +104,255 @@ toccare la logica delicata delle transazioni di eredità.
 
 ---
 
-## 2. Rimozioni (codice morto / debug) — comportamento invariato
+## 2. Removals (dead / debug code) — behaviour unchanged
 
-Tutte le rimozioni seguenti sono state verificate come **non utilizzate** o
-**puramente di debug**, quindi non alterano il comportamento del plugin.
+All the following removals were verified as **unused** or **purely debug**, so
+they do not alter the plugin's behaviour.
 
-1. **`util.py` → `core/util.py`**: rimossi tre helper di debug usati solo per
-   stampe a console:
-   - `print_var()`   (orig. riga 439)
-   - `print_utxo()`  (orig. riga 474)
-   - `print_prevout()` (orig. riga 486)
+1. **`util.py` → `core/util.py`**: removed three debug helpers used only for
+   console printing:
+   - `print_var()`   (orig. line 439)
+   - `print_utxo()`  (orig. line 474)
+   - `print_prevout()` (orig. line 486)
 
-2. **`bal.py` → `core/plugin_base.py`**: rimossa la funzione **stub vuota**
-   `get_will_settings(x)` (orig. righe 12-14):
+2. **`bal.py` → `core/plugin_base.py`**: removed the **empty stub** function
+   `get_will_settings(x)` (orig. lines 12-14):
    ```python
    def get_will_settings(x):
        # print(x)
        pass
    ```
-   ⚠️ Verificato: **non era riferita da nessun `register_dict`** — i tre
-   `register_dict` usano `tuple`, `dict`, `lambda x: x`. Quindi era codice
-   morto. La funzione **usata** `get_will(x)` è stata mantenuta identica.
+   ⚠️ Verified: **it was not referenced by any `register_dict`** — the three
+   `register_dict` calls use `tuple`, `dict`, `lambda x: x`. So it was dead
+   code. The **used** function `get_will(x)` was kept identical.
 
-3. **`will.py` (`WillItem`) → spostato in `gui/qt/theme.py`**: il metodo
-   `WillItem.get_color()` (orig. riga 852) restituiva colori esadecimali —
-   è logica di **presentazione**, non di dominio. È stato spostato fuori dal
-   modello e trasformato nella funzione `status_color(will_item)` in
-   `gui/qt/theme.py`. **Verificato byte-identico** su tutte le combinazioni di
-   stato (stessa catena di `get_status(...)`, stessi codici colore).
+3. **`will.py` (`WillItem`) → moved to `gui/qt/theme.py`**: the method
+   `WillItem.get_color()` (orig. line 852) returned hexadecimal colours —
+   it is **presentation** logic, not domain logic. It was moved out of the
+   model and turned into the function `status_color(will_item)` in
+   `gui/qt/theme.py`. **Verified byte-identical** across all status
+   combinations (same `get_status(...)` chain, same colour codes).
 
 ---
 
-## 3. Cambi di import (necessari per la nuova struttura)
+## 3. Import changes (required by the new structure)
 
-Gli import sono stati aggiornati da "flat" a "a package". Esempi:
+The imports were updated from "flat" to "package" style. Examples:
 
-| Prima                              | Dopo                                  |
+| Before                             | After                                 |
 |------------------------------------|---------------------------------------|
 | `from .bal import BalPlugin`       | `from .plugin_base import BalPlugin`   (in willexecutors) |
-| `from .util import Util`           | `from .util import Util`               (invariato, ora dentro core/) |
-| (in qt.py) `from .bal import ...`  | i moduli GUI importano da `...core.X`  |
+| `from .util import Util`           | `from .util import Util`               (unchanged, now inside core/) |
+| (in qt.py) `from .bal import ...`  | the GUI modules import from `...core.X`  |
 
-- Aggiunti `from .common import _, _logger` nei moduli GUI, perché `import *`
-  **non** esporta i nomi che iniziano con underscore.
-- Aggiunti 3 import "lazy" (dentro le funzioni) in `dialogs.py` per spezzare il
-  ciclo `dialogs ↔ lists` (lists importa `BalBuildWillDialog` da dialogs).
+- Added `from .common import _, _logger` in the GUI modules, because `import *`
+  does **not** export names starting with an underscore.
+- Added 3 "lazy" imports (inside the functions) in `dialogs.py` to break the
+  `dialogs ↔ lists` cycle (lists imports `BalBuildWillDialog` from dialogs).
 
-La **logica interna dei metodi** non è stata toccata: `prepare_transactions()`,
-`buildTransactions()` ecc. sono verbatim.
+The **internal logic of the methods** was not touched: `prepare_transactions()`,
+`buildTransactions()`, etc. are verbatim.
 
 ---
 
-## 4. Packaging conforme allo standard Electrum
+## 4. Electrum-standard packaging
 
-`manifest.json` reso conforme a https://plugins.electrum.org/developers.html :
+`manifest.json` made compliant with https://plugins.electrum.org/developers.html :
 
-| Campo            | Prima              | Dopo                          |
+| Field            | Before             | After                         |
 |------------------|--------------------|-------------------------------|
-| `name`           | `"BAL"`            | `"bal"` (minuscolo = nome dir) |
-| `version`        | (assente, era solo nella description) | `"0.2.8"`     |
-| `description`    | con `<br>` HTML    | testo pulito                  |
-| `licence`        | (assente)          | `"MIT"`                       |
-| `fullname`/`author`/`available_for`/`icon` | presenti | invariati        |
+| `name`           | `"BAL"`            | `"bal"` (lowercase = dir name) |
+| `version`        | (absent, was only in the description) | `"0.2.8"`     |
+| `description`    | with HTML `<br>`   | clean text                    |
+| `licence`        | (absent)           | `"MIT"`                       |
+| `fullname`/`author`/`available_for`/`icon` | present | unchanged        |
 
-- `__init__.py` (era **vuoto**): ora contiene la docstring di architettura e
+- `__init__.py` (was **empty**): now contains the architecture docstring and
   `__version__ = "0.2.8"`.
-- Portati nel package: `LICENSE`, `VERSION`, `README.md`, `bal_resources.py`,
-  e la cartella `wallet_util/` (invariata).
+- Brought into the package: `LICENSE`, `VERSION`, `README.md`, `bal_resources.py`,
+  and the `wallet_util/` folder (unchanged).
 
 ---
 
-## 5. CORREZIONE BUG: caricamento come plugin esterno (.zip)
+## 5. BUG FIX: loading as an external plugin (.zip)
 
-Durante i test su **Electrum 4.7.2 portable per Windows** sono emersi due
-problemi reali nel caricare il plugin come **plugin esterno da .zip**:
+During testing on **Electrum 4.7.2 portable for Windows**, two real problems
+emerged when loading the plugin as an **external plugin from .zip**:
 
 ### Bug 5a — `ModuleNotFoundError: No module named 'electrum_external_plugins'`
-- **Causa:** Electrum carica i plugin esterni da zip sotto il package sintetico
-  `electrum_external_plugins.bal`, ed esegue **solo** l'`__init__` del package e
-  il modulo `qt`. Non registra il package radice sintetico né i sotto-package
-  annidati (`gui`, `gui.qt`). Un semplice `from .gui.qt.plugin import Plugin`
-  fallisce risalendo ai parent mancanti.
-- **Fix:** `qt.py` ora è uno shim resiliente che (1) rileva a runtime il proprio
-  nome di package (`__package__`), (2) ricostruisce in `sys.modules` gli
-  eventuali package padre mancanti, (3) importa `Plugin` con
-  `importlib.import_module`. Funziona **sia** come plugin interno
-  (`electrum.plugins.bal`) **sia** esterno (`electrum_external_plugins.bal`).
+- **Cause:** Electrum loads external plugins from zip under the synthetic
+  package `electrum_external_plugins.bal`, and runs **only** the package
+  `__init__` and the `qt` module. It does not register the synthetic root
+  package nor the nested sub-packages (`gui`, `gui.qt`). A simple
+  `from .gui.qt.plugin import Plugin` fails when walking up to the missing
+  parents.
+- **Fix:** `qt.py` is now a resilient shim that (1) detects its own package
+  name at runtime (`__package__`), (2) rebuilds in `sys.modules` any missing
+  parent packages, (3) imports `Plugin` with `importlib.import_module`. It
+  works **both** as an internal plugin (`electrum.plugins.bal`) **and** as an
+  external one (`electrum_external_plugins.bal`).
 
 ### Bug 5b — `zlib.error: Error -5 ... incomplete or truncated stream`
-- **Causa:** alcune build portable di Electrum su Windows non riescono a
-  decomprimere con `zipimport` archivi che contengono **voci di directory** o
-  compressione non standard.
-- **Fix:** aggiunto `build_zip.py`, che genera un archivio "zipimport-friendly":
-  solo file (nessuna voce di directory), DEFLATE standard, ordine deterministico
-  (SHA-256 riproducibile), escludendo `__pycache__`/`*.pyc`. Stampa anche
-  l'hash SHA-256 per verificare l'integrità del download.
+- **Cause:** some Electrum portable builds on Windows fail to decompress with
+  `zipimport` archives that contain **directory entries** or non-standard
+  compression.
+- **Fix:** added `build_zip.py`, which generates a "zipimport-friendly"
+  archive: files only (no directory entries), standard DEFLATE, deterministic
+  ordering (reproducible SHA-256), excluding `__pycache__`/`*.pyc`. It also
+  prints the SHA-256 hash to verify the integrity of the download.
 
 ---
 
-## 6. Test aggiunti
+## 6. Tests added
 
-- `tests/smoke_test.py` — verifica import + comportamento di base
-  (`BalTimestamp`, helper di `Util`, costanti `HEIR_*`, stati di `WillItem`,
-  hook del `Plugin`).
-- `tests/external_zip_test.py` — riproduce **fedelmente** la sequenza di
-  caricamento di un plugin esterno da zip di Electrum (regressione per il
-  Bug 5a/5b).
+- `tests/smoke_test.py` — checks imports + basic behaviour
+  (`BalTimestamp`, `Util` helpers, `HEIR_*` constants, `WillItem` states,
+  `Plugin` hooks).
+- `tests/external_zip_test.py` — **faithfully** reproduces Electrum's loading
+  sequence for an external plugin from zip (regression test for Bug 5a/5b).
 
-Tutti i test passano sotto Electrum 4.7.2 + PyQt6.
-
----
-
-## 7. Riepilogo: cosa NON è cambiato
-
-- La logica di costruzione delle transazioni (`heirs.py`, `will.py`).
-- I valori e i tipi di `json_db.register_dict(...)`.
-- I codici colore degli stati (solo spostati in `theme.py`).
-- L'algoritmo di tutte le classi GUI (copiate verbatim).
-- Il formato dei dati salvati nel wallet.
-
-## 8. Note / raccomandazioni
-
-- Il plugin **richiede Electrum 4.7.2**: `json_db.register_dict` è stato
-  **rimosso** nelle versioni successive (master), dove andrebbe sostituito con
-  `stored_dict.register_name`. Valutare un adeguamento se si vuole supportare
-  Electrum più recente.
-- Prima del rilascio è consigliata una prova **end-to-end in una sessione
-  Electrum reale** (preferibilmente su testnet), oltre agli smoke test.
+All tests pass under Electrum 4.7.2 + PyQt6.
 
 ---
 
-## 9. CORREZIONI GUI — finestre e ciclo di vita (B1-B10)
+## 7. Summary: what did NOT change
 
-Dopo il refactoring di struttura sono stati corretti **dieci difetti grafici e
-di ciclo di vita** delle finestre, già presenti nel codice originale. La logica
-di business è rimasta **byte-identica** (nessuna modifica a `bal/core/*`): sono
-cambiati solo **presentazione, parent, modalità, z-order, ciclo di vita e
-cleanup** delle finestre Qt.
+- The transaction-building logic (`heirs.py`, `will.py`).
+- The values and types of `json_db.register_dict(...)`.
+- The status colour codes (only moved to `theme.py`).
+- The algorithm of all the GUI classes (copied verbatim).
+- The format of the data saved in the wallet.
 
-Sintomi segnalati dall'utente, ora risolti:
-- **(S1)** le finestre del plugin sparivano dietro la finestra di Electrum;
-- **(S2)** alcuni meccanismi funzionavano solo dopo aver chiuso e riavviato
-  Electrum.
+## 8. Notes / recommendations
 
-| ID  | Problema (presente nell'originale)                                   | Correzione applicata |
+- The plugin **requires Electrum 4.7.2**: `json_db.register_dict` was
+  **removed** in later versions (master), where it should be replaced with
+  `stored_dict.register_name`. Consider an update if you want to support a
+  more recent Electrum.
+- Before release, an **end-to-end test in a real Electrum session** is
+  recommended (preferably on testnet), in addition to the smoke tests.
+
+---
+
+## 9. GUI FIXES — windows and lifecycle (B1-B10)
+
+After the structural refactoring, **ten graphical and lifecycle defects** of
+the windows were fixed, all already present in the original code. The business
+logic remained **byte-identical** (no changes to `bal/core/*`): only the
+**presentation, parent, modality, z-order, lifecycle and cleanup** of the Qt
+windows changed.
+
+Symptoms reported by the user, now resolved:
+- **(S1)** the plugin windows disappeared behind the Electrum window;
+- **(S2)** some mechanisms worked only after closing and restarting Electrum.
+
+| ID  | Problem (present in the original)                                    | Applied fix |
 |-----|----------------------------------------------------------------------|----------------------|
-| B1  | `self.parent = parent` sovrascriveva il metodo `parent()` di Qt, rompendo la gerarchia delle finestre | rinominato in `self._bal_parent` (in `dialogs.py`, `lists.py`, `widgets.py`); il parent reale passa da `top_level_of(parent)` |
-| B2  | dialoghi aperti con `.show()` non modale → finivano sotto la finestra principale | sostituiti con `show_on_top()` / `show_modal()` e parent corretto |
-| B3  | messaggio "Please restart Electrum to activate the BAL plugin": il plugin si attivava solo dopo riavvio | inizializzazione **a caldo** con `_setup_window()` che replica `load_wallet` — niente più riavvio |
-| B4  | chiave del dizionario finestre usava il **metodo** `winId` invece del valore | chiave stabile `_window_key()` basata su `id(window)` |
-| B5  | `on_close` ingoiava tutti gli errori con `except: pass` | riscritto: niente `except:pass`, log per ogni passo, reset pulito dello stato |
-| B6  | `BalBlockingWaitingDialog` bloccava il thread della GUI (`processEvents` commentato) | ripristinato `processEvents()` → GUI reattiva durante l'attesa |
-| B7  | `closeEvent`/`hideEvent` con cleanup del thread commentato | gestione esplicita di `closeEvent`/`hideEvent` + chiamata a `super()` |
-| B8  | `closeEvent` incompleto in alcuni dialog | gestione uniforme dello stato di chiusura |
-| B9  | `show()+raise_()` senza `activateWindow()` né modalità → finestra non in primo piano | `bring_to_front()` = `raise_()` + `activateWindow()` |
-| B10 | gestione multi-wallet / multi-finestra fragile; menu cercato per titolo `&Tools` | uso dell'API ufficiale `window.tools_menu` |
+| B1  | `self.parent = parent` overrode Qt's `parent()` method, breaking the window hierarchy | renamed to `self._bal_parent` (in `dialogs.py`, `lists.py`, `widgets.py`); the real parent comes from `top_level_of(parent)` |
+| B2  | dialogs opened with non-modal `.show()` → ended up under the main window | replaced with `show_on_top()` / `show_modal()` and the correct parent |
+| B3  | message "Please restart Electrum to activate the BAL plugin": the plugin activated only after a restart | **hot** initialization with `_setup_window()` that replicates `load_wallet` — no more restart |
+| B4  | the windows-dictionary key used the `winId` **method** instead of its value | stable `_window_key()` key based on `id(window)` |
+| B5  | `on_close` swallowed all errors with `except: pass` | rewritten: no `except:pass`, logging at every step, clean state reset |
+| B6  | `BalBlockingWaitingDialog` blocked the GUI thread (`processEvents` commented out) | restored `processEvents()` → responsive GUI during the wait |
+| B7  | `closeEvent`/`hideEvent` with the thread cleanup commented out | explicit handling of `closeEvent`/`hideEvent` + call to `super()` |
+| B8  | incomplete `closeEvent` in some dialogs | uniform handling of the closing state |
+| B9  | `show()+raise_()` without `activateWindow()` nor modality → window not in the foreground | `bring_to_front()` = `raise_()` + `activateWindow()` |
+| B10 | fragile multi-wallet / multi-window handling; menu looked up by the `&Tools` title | use of the official `window.tools_menu` API |
 
-### Nuovo modulo: `gui/qt/window_utils.py` (119 righe)
+### New module: `gui/qt/window_utils.py` (119 lines)
 
-Gli helper per la gestione delle finestre sono stati **centralizzati** in un
-unico modulo, così la stessa logica non viene duplicata nei vari dialog:
+The window-management helpers were **centralized** in a single module, so that
+the same logic is not duplicated across the various dialogs:
 
-- `top_level_of(widget)` — risale alla finestra di primo livello corretta da
-  usare come parent;
-- `bring_to_front(window)` — `raise_()` + `activateWindow()` per portare in
-  primo piano;
-- `stop_thread(thread)` — stop+wait sicuro di un `TaskThread`;
-- `show_modal(dialog)` — apertura modale corretta (`exec()`);
-- `show_on_top(window)` — apertura non modale ma sopra le altre finestre.
+- `top_level_of(widget)` — walks up to the correct top-level window to use as
+  parent;
+- `bring_to_front(window)` — `raise_()` + `activateWindow()` to bring to the
+  foreground;
+- `stop_thread(thread)` — safe stop+wait of a `TaskThread`;
+- `show_modal(dialog)` — correct modal opening (`exec()`);
+- `show_on_top(window)` — non-modal opening but above the other windows.
 
-`gui/qt/common.py` importa questi helper e li rende disponibili al resto della
-GUI.
+`gui/qt/common.py` imports these helpers and makes them available to the rest
+of the GUI.
 
 ---
 
-## 10. CORREZIONE BUG: download lista will-executor
+## 10. BUG FIX: will-executor list download
 
-Dopo l'installazione del pacchetto con le correzioni GUI, l'utente ha
-segnalato che il comando **"download list"** dei will-executor non scaricava
-più la lista.
+After installing the package with the GUI fixes, the user reported that the
+will-executor **"download list"** command no longer downloaded the list.
 
-### Indagine
+### Investigation
 
-Il codice di rete (`core/willexecutors.py`: `send_request`, `handle_response`,
-`download_list`, `initialize_willexecutor`) è stato confrontato riga per riga
-con l'originale Gitea ed è risultato **byte-identico** (l'unica differenza è il
-parametro aggiuntivo `welist_server` in `download_list`, retro-compatibile).
+The network code (`core/willexecutors.py`: `send_request`, `handle_response`,
+`download_list`, `initialize_willexecutor`) was compared line by line with the
+original Gitea version and turned out to be **byte-identical** (the only
+difference is the extra `welist_server` parameter in `download_list`, which is
+backward-compatible).
 
-Durante l'indagine sono comunque emersi e stati corretti **due difetti reali**
-introdotti dalle correzioni GUI, che potevano "perdere" il risultato del
-download:
+During the investigation, **two real defects** introduced by the GUI fixes were
+nevertheless found and corrected, which could "lose" the download result:
 
-1. **`BalDialog.closeEvent`/`hideEvent` fermavano il `TaskThread`.** In Electrum
-   `TaskThread.on_done` esegue `cb_done` (cioè `self.accept`, che **chiude** il
-   dialog) **prima** di `cb_result` (cioè `on_success`, che **aggiorna** la
-   lista). Fermare il thread alla chiusura del dialog **scartava** quindi il
-   risultato appena scaricato. → I due metodi sono stati riportati a **non**
-   fermare il thread (con commento esplicativo nel codice).
-2. **`BalWaitingDialog.exe()` usava una modalità sbagliata** (`show_modal` /
-   `WindowModal`). → Ripristinato l'originale `self.exec()`, aggiungendo prima
-   `bring_to_front(self)` per garantire il primo piano.
+1. **`BalDialog.closeEvent`/`hideEvent` stopped the `TaskThread`.** In Electrum,
+   `TaskThread.on_done` runs `cb_done` (i.e. `self.accept`, which **closes** the
+   dialog) **before** `cb_result` (i.e. `on_success`, which **updates** the
+   list). Stopping the thread when the dialog closed therefore **discarded** the
+   result that had just been downloaded. → The two methods were restored so they
+   do **not** stop the thread (with an explanatory comment in the code).
+2. **`BalWaitingDialog.exe()` used the wrong modality** (`show_modal` /
+   `WindowModal`). → Restored the original `self.exec()`, first adding
+   `bring_to_front(self)` to guarantee the foreground.
 
-Inoltre i percorsi del **pulsante** e del **wizard** (che prima scaricavano in
-modi diversi e con messaggi diversi) sono stati **unificati** in un unico
-helper `fetch_will_executors_list`, eseguito dentro il worker del `TaskThread`.
+In addition, the **button** and **wizard** paths (which previously downloaded
+in different ways and with different messages) were **unified** into a single
+helper `fetch_will_executors_list`, run inside the `TaskThread` worker.
 
-### Causa vera del mancato download: ambientale, NON del plugin
+### Real cause of the failed download: environmental, NOT the plugin
 
-Una probe di controllo con `urllib` che **bypassava completamente Electrum**
-falliva ugualmente con `WinError 10054` ("connection forcibly closed by remote
-host"): segno che la **rete/ISP dell'utente resettava la connessione HTTPS**
-verso `welist.bitcoin-after.life`. La conferma definitiva: **attivando una VPN
-il download è andato a buon fine.**
+A control probe with `urllib` that **completely bypassed Electrum** also failed
+with `WinError 10054` ("connection forcibly closed by remote host"): a sign
+that the **user's network/ISP was resetting the HTTPS connection** to
+`welist.bitcoin-after.life`. The definitive confirmation: **with a VPN enabled
+the download succeeded.**
 
-L'originale "sembrava" funzionare perché spedisce comunque un will-executor di
-**default già incorporato** (`https://we.bitcoin-after.life`), quindi la lista
-non risultava mai del tutto vuota anche senza un download riuscito.
+The original "seemed" to work because it ships anyway a **built-in default**
+will-executor (`https://we.bitcoin-after.life`), so the list never appeared
+completely empty even without a successful download.
 
-### Pulizia finale (scelta dall'utente — "Opzione 1")
+### Final cleanup (chosen by the user — "Option 1")
 
-- **Finestra di attesa non bloccante** mantenuta (`BalWaitingDialog`), così la
-  GUI non si congela durante il download.
-- **Fallback dell'URL**: prima l'URL configurato (`WELIST_SERVER`), poi quello
+- **Non-blocking waiting window** kept (`BalWaitingDialog`), so the GUI does
+  not freeze during the download.
+- **URL fallback**: first the configured URL (`WELIST_SERVER`), then the
   hardcoded `https://welist.bitcoin-after.life/`.
-- **Diagnostica dettagliata spostata nei soli log** (rimossa la probe `urllib`
-  dall'interfaccia).
-- **Messaggio d'errore semplice per l'utente, in inglese** (`DOWNLOAD_FAILED_MESSAGE`):
+- **Detailed diagnostics moved to the logs only** (removed the `urllib` probe
+  from the interface).
+- **Simple error message for the user, in English** (`DOWNLOAD_FAILED_MESSAGE`):
 
   > *"Could not download the will-executors list. This is usually caused by
   > your internet connection or a firewall, not by the plugin. Please check
   > your connection (a VPN often helps) and try again."*
 
-### File toccati (solo presentazione/GUI, logica invariata)
+### Files touched (presentation/GUI only, logic unchanged)
 
-- `gui/qt/window.py` — helper condiviso `fetch_will_executors_list`,
-  `download_list` con `TaskThread` + `BalWaitingDialog`, costante
+- `gui/qt/window.py` — shared helper `fetch_will_executors_list`,
+  `download_list` with `TaskThread` + `BalWaitingDialog`, constant
   `DOWNLOAD_FAILED_MESSAGE`.
-- `gui/qt/lists.py` — `WillExecutorWidget.download_list` instradato sul
-  percorso condiviso con `on_success` che aggiorna/salva la lista.
-- `gui/qt/dialogs.py` — `BalDialog.closeEvent`/`hideEvent` **non** fermano più
-  il thread; `BalWaitingDialog.exe()` torna a `self.exec()` + `bring_to_front`.
-- `tests/gui_fixes_test.py` — asserzione di **regressione**: verifica che
-  `closeEvent`/`hideEvent` **non** contengano `stop_thread` (per non
-  reintrodurre il bug che scartava il download).
+- `gui/qt/lists.py` — `WillExecutorWidget.download_list` routed onto the shared
+  path with an `on_success` that updates/saves the list.
+- `gui/qt/dialogs.py` — `BalDialog.closeEvent`/`hideEvent` no longer stop the
+  thread; `BalWaitingDialog.exe()` goes back to `self.exec()` + `bring_to_front`.
+- `tests/gui_fixes_test.py` — **regression** assertion: verifies that
+  `closeEvent`/`hideEvent` do **not** contain `stop_thread` (so as not to
+  reintroduce the bug that discarded the download).
 
 ---
 
-## 11. Confronto strutturale finale (originale Gitea → refactor)
+## 11. Final structural comparison (original Gitea → refactor)
 
-Conteggio file `.py` (escluse cartelle generate):
+`.py` file count (excluding generated folders):
 
-| Originale (Gitea)            | righe | →  | Refactor (`bal/`)                         | righe |
+| Original (Gitea)             | lines | →  | Refactor (`bal/`)                         | lines |
 |------------------------------|------:|----|-------------------------------------------|------:|
 | `__init__.py`                |     1 | →  | `__init__.py`                             |    37 |
 | `bal.py`                     |   161 | →  | `core/plugin_base.py`                     |   351 |
@@ -362,56 +360,56 @@ Conteggio file `.py` (escluse cartelle generate):
 | `heirs.py`                   |   792 | →  | `core/heirs.py`                           |   806 |
 | `will.py`                    |   903 | →  | `core/will.py`                            |   938 |
 | `willexecutors.py`           |   547 | →  | `core/willexecutors.py`                   |   390 |
-| `qt.py` (monolite GUI)       |  3777 | →  | suddiviso in `gui/qt/*` (vedi sotto)      |     — |
+| `qt.py` (GUI monolith)       |  3777 | →  | split into `gui/qt/*` (see below)         |     — |
 | `bal_resources.py`           |    14 | →  | `bal_resources.py`                        |    14 |
-| `wallet_util/*.py`           |   275 | →  | `wallet_util/*.py` (invariati)            |   280 |
+| `wallet_util/*.py`           |   275 | →  | `wallet_util/*.py` (unchanged)            |   280 |
 
-Suddivisione del vecchio `qt.py` (3777 righe) nei moduli GUI:
+Split of the old `qt.py` (3777 lines) into the GUI modules:
 
-| Modulo refactor             | righe | Contenuto |
+| Refactor module             | lines | Content |
 |-----------------------------|------:|-----------|
-| `gui/qt/plugin.py`          |   303 | classe `Plugin` (`@hook` Electrum → GUI) |
-| `gui/qt/window.py`          |  1048 | `BalWindow` (controller per-wallet) |
-| `gui/qt/dialogs.py`         |  1155 | finestre di dialogo + wizard |
-| `gui/qt/lists.py`           |   964 | viste ad albero (eredi/preview/executor) |
-| `gui/qt/widgets.py`         |   782 | widget "foglia" |
-| `gui/qt/common.py`          |   157 | import condivisi + helper |
-| `gui/qt/window_utils.py`    |   119 | helper finestre (NUOVO — vedi §9) |
+| `gui/qt/plugin.py`          |   303 | `Plugin` class (`@hook` Electrum → GUI) |
+| `gui/qt/window.py`          |  1048 | `BalWindow` (per-wallet controller) |
+| `gui/qt/dialogs.py`         |  1155 | dialog windows + wizard |
+| `gui/qt/lists.py`           |   964 | tree views (heirs/preview/executor) |
+| `gui/qt/widgets.py`         |   782 | "leaf" widgets |
+| `gui/qt/common.py`          |   157 | shared imports + helpers |
+| `gui/qt/window_utils.py`    |   119 | window helpers (NEW — see §9) |
 | `gui/qt/calendar.py`        |    80 | `BalCalendar` |
-| `gui/qt/theme.py`           |    59 | mappatura stato → colore |
-| `gui/qt/__init__.py`        |    17 | init package GUI |
+| `gui/qt/theme.py`           |    59 | status → colour mapping |
+| `gui/qt/__init__.py`        |    17 | GUI package init |
 
-> Le differenze nei conteggi di righe rispetto all'originale derivano da:
-> riformattazione/commenti, separazione degli import per modulo, e spostamento
-> di funzioni tra `util.py`/`bal.py` e i nuovi moduli. **Gli algoritmi non sono
-> stati modificati.**
-
----
-
-## 12. Cronologia delle modifiche su GitHub
-
-- **`4198a51`** — import iniziale del refactor strutturale (v0.2.8): separazione
-  `core/` (logica) vs `gui/qt/` (presentazione), packaging conforme, fix
-  caricamento zip esterno, smoke test (sezioni §1-§8).
-- **`d56fa36`** — questo changelog del refactoring (in italiano).
-- **`4806997`** — `DIAGNOSI_GUI.md`: diagnosi dei bug GUI di z-order e ciclo di
-  vita (Fase A).
-- **`dd6f677`** (PR **#2**, squash) — correzioni GUI **B1-B10** + fix download
-  lista will-executor + `window_utils.py` + test di regressione (sezioni §9-§10).
-- **PR #3** — fix **OverflowError su Windows (anno 2038)** che rompeva le schede
-  Will/Heirs e la voce di menu (sezione §13).
+> The differences in the line counts compared to the original come from:
+> reformatting/comments, separation of imports per module, and the movement
+> of functions between `util.py`/`bal.py` and the new modules. **The algorithms
+> were not modified.**
 
 ---
 
-## 13. CORREZIONE BUG: OverflowError su Windows (limite anno 2038)
+## 12. Change history on GitHub
 
-### Sintomo (Windows 11)
-Dopo aver **riavviato Electrum** o **cambiato wallet**, le schede **Will** e
-**Heirs** sparivano e compariva una **voce di menu condensata/illeggibile**
-(icona + testo sovrapposti) sotto il logo di Electrum, accanto a *Portafogli*.
-Su Linux il problema non si manifestava.
+- **`4198a51`** — initial import of the structural refactor (v0.2.8):
+  separation of `core/` (logic) vs `gui/qt/` (presentation), compliant
+  packaging, external-zip load fix, smoke test (sections §1-§8).
+- **`d56fa36`** — this refactoring changelog (in Italian).
+- **`4806997`** — `GUI_DIAGNOSIS.md` (originally `DIAGNOSI_GUI.md`): diagnosis
+  of the z-order and lifecycle GUI bugs (Phase A).
+- **`dd6f677`** (PR **#2**, squash) — GUI fixes **B1-B10** + will-executor list
+  download fix + `window_utils.py` + regression test (sections §9-§10).
+- **PR #3** — fix for the **OverflowError on Windows (year 2038)** that broke
+  the Will/Heirs tabs and the menu entry (section §13).
 
-### Causa vera (dal log di Electrum dell'utente)
+---
+
+## 13. BUG FIX: OverflowError on Windows (year-2038 limit)
+
+### Symptom (Windows 11)
+After **restarting Electrum** or **switching wallet**, the **Will** and
+**Heirs** tabs disappeared and a **condensed/illegible menu entry**
+(overlapping icon + text) appeared under the Electrum logo, next to *Wallets*.
+On Linux the problem did not occur.
+
+### Real cause (from the user's Electrum log)
 ```
 OverflowError: Python int too large to convert to C int
   window.py __init__ -> create_heirs_tab -> WillSettingsWidget
@@ -419,196 +417,192 @@ OverflowError: Python int too large to convert to C int
   -> datetime.fromtimestamp(NLOCKTIME_MAX)
 ```
 
-- `NLOCKTIME_MAX = 2**32 - 1 = 4294967295` viene usato come locktime di
-  **default/sentinella**.
-- Su **Windows** `time_t` è a **32 bit**, quindi `datetime.fromtimestamp(ts)`
-  solleva **`OverflowError`** per qualsiasi timestamp oltre il **2038**.
-- Su **Linux 64-bit** la stessa chiamata **funziona**: ecco perché il bug si
-  vedeva solo su Windows e i test su Linux non lo intercettavano.
-- L'eccezione interrompeva `BalWindow.__init__` durante `init_menubar` /
-  `load_wallet`, lasciando le schede Will/Heirs e la voce di menu **a metà
-  costruzione** → l'elemento grafico condensato/illeggibile sotto il logo.
+- `NLOCKTIME_MAX = 2**32 - 1 = 4294967295` is used as the
+  **default/sentinel** locktime.
+- On **Windows** `time_t` is **32-bit**, so `datetime.fromtimestamp(ts)`
+  raises **`OverflowError`** for any timestamp beyond **2038**.
+- On **64-bit Linux** the same call **works**: that is why the bug was visible
+  only on Windows and the Linux tests did not catch it.
+- The exception interrupted `BalWindow.__init__` during `init_menubar` /
+  `load_wallet`, leaving the Will/Heirs tabs and the menu entry **half-built**
+  → the condensed/illegible graphical element under the logo.
 
-> Nota: i due primi tentativi di correzione (status-bar no-op e idempotenza di
-> `init_menubar_tools`) **non** centravano la causa; sono stati comunque
-> mantenuti perché innocui e leggermente migliorativi, ma il vero colpevole era
-> questo crash a monte.
+> Note: the first two correction attempts (a no-op status bar and the
+> idempotency of `init_menubar_tools`) did **not** hit the cause; they were
+> kept anyway because they are harmless and slightly improving, but the real
+> culprit was this upstream crash.
 
-### Fix (comportamento invariato per tutti i valori normali)
-- **`BalTimestamp._safe_fromtimestamp()`**: `datetime.fromtimestamp` con
-  **clamp a INT32_MAX** (anno 2038) in caso di `OverflowError`/`OSError`/
-  `ValueError`, **esattamente** come la funzione `get_max_allowed_timestamp()`
-  dell'originale (workaround per Electrum issue **#6170**).
-- Usato in `to_date` / `to_timestamp` / `__str__` / `__repr__` di
+### Fix (behaviour unchanged for all normal values)
+- **`BalTimestamp._safe_fromtimestamp()`**: `datetime.fromtimestamp` with
+  a **clamp to INT32_MAX** (year 2038) on `OverflowError`/`OSError`/
+  `ValueError`, **exactly** like the original's `get_max_allowed_timestamp()`
+  function (workaround for Electrum issue **#6170**).
+- Used in `to_date` / `to_timestamp` / `__str__` / `__repr__` of
   `BalTimestamp`.
-- `gui/qt/widgets.py` (`set_value`): usa il converter sicuro.
-- `core/util.py` (`timestamp_minus`): stessa protezione inline con clamp a
+- `gui/qt/widgets.py` (`set_value`): uses the safe converter.
+- `core/util.py` (`timestamp_minus`): same inline protection with a clamp to
   INT32_MAX.
 
-I valori entro il 2038 (date assolute normali, durate relative come `90d`/`5y`)
-producono **lo stesso identico risultato** di prima.
+Values within 2038 (normal absolute dates, relative durations such as
+`90d`/`5y`) produce **exactly the same result** as before.
 
 ### Test
-- `tests/windows_overflow_test.py` riproduce il limite 32-bit di Windows
-  (monkeypatch di `datetime.fromtimestamp`) e dimostra che **senza** il fix si
-  ottiene lo **stesso** `OverflowError` del log, mentre **con** il fix passa.
-  Verificato anche che il test **fallisce** senza il fix.
+- `tests/windows_overflow_test.py` reproduces the Windows 32-bit limit
+  (monkeypatch of `datetime.fromtimestamp`) and proves that **without** the fix
+  you get the **same** `OverflowError` as in the log, while **with** the fix it
+  passes. It was also verified that the test **fails** without the fix.
 
-Confermato dall'utente: **"si ora funziona"**.
+Confirmed by the user: **"yes, it works now"**.
 
-## 14. NUOVA FUNZIONE: invalidazione automatica al posticipo dell'eredità
+## 14. NEW FEATURE: automatic invalidation when postponing the inheritance
 
-### Problema
-Una transazione di eredità viene firmata con un **locktime fisso e immutabile**
-e inviata ai will-executor, che sono economicamente incentivati a trasmetterla
-(incassano le fee). Se l'utente, dopo aver firmato/inviato, **posticipa** la
-data di consegna (es. di un anno), la **vecchia** transazione gia firmata resta
-valida sui server dei will-executor. Poiche ha il locktime piu basso, un
-will-executor potrebbe trasmetterla appena scade, eseguendo l'eredita **in
-anticipo** rispetto alla nuova volonta dell'utente. La versione precedente
-**non gestiva** questo caso: il posticipo non produceva alcuna azione.
+### Problem
+An inheritance transaction is signed with a **fixed, immutable locktime** and
+sent to the will-executors, who are economically incentivized to broadcast it
+(they collect the fees). If the user, after signing/sending, **postpones** the
+delivery date (e.g. by one year), the **old** already-signed transaction
+remains valid on the will-executors' servers. Since it has the lower locktime,
+a will-executor could broadcast it as soon as it expires, executing the
+inheritance **earlier** than the user's new intent. The previous version did
+**not handle** this case: postponing produced no action at all.
 
-### Soluzione (Strategia B — invalidazione esplicita on-chain)
-Al posticipo di un'eredita **gia firmata e/o inviata** (stato `COMPLETE` o
-`PUSHED`), il plugin chiede di **invalidare on-chain** i fondi prima di
-ricostruire la nuova eredita. L'invalidazione spende gli stessi UTXO verso un
-nuovo indirizzo di change con `locktime = altezza corrente` (RBF), quindi e
-trasmettibile subito: una volta confermata, la vecchia transazione pre-firmata
-diventa **definitivamente inutilizzabile**, vincendo la corsa contro qualunque
-will-executor.
+### Solution (Strategy B — explicit on-chain invalidation)
+When postponing an inheritance that is **already signed and/or sent** (state
+`COMPLETE` or `PUSHED`), the plugin asks to **invalidate the funds on-chain**
+before rebuilding the new inheritance. The invalidation spends the same UTXOs
+to a new change address with `locktime = current height` (RBF), so it is
+broadcastable immediately: once confirmed, the old pre-signed transaction
+becomes **permanently unusable**, winning the race against any will-executor.
 
-### Dettagli tecnici
+### Technical details
 - **`core/will.py`**:
-  - nuova eccezione `WillPostponedException` (sottoclasse di
+  - new exception `WillPostponedException` (subclass of
     `NotCompleteWillException`);
-  - `check_willexecutors_and_heirs`: il confronto del locktime non usa piu
-    l'entry dell'erede memorizzata (`their[2]`), che viene aggiornata in memoria
-    insieme al nuovo valore al momento del posticipo e quindi risulterebbe
-    sempre uguale. Ora confronta il locktime richiesto con **`w.tx.locktime`**,
-    cioe il locktime **congelato** nella transazione firmata (immutabile, e
-    quello che i will-executor possiedono). Tre casi: invariato → coerente;
-    nuovo > tx su will firmato/inviato → `WillPostponedException`; nuovo > tx su
-    will mai inviato → semplice ricostruzione (nessuna fee on-chain).
-- **`gui/qt/dialogs.py`** (`BalBuildWillDialog.task_phase1`, il percorso reale
-  usato da **Tools → Prepare**): aggiunto il ramo `except WillPostponedException`
-  **prima** di `NotCompleteWillException`; si comporta come il caso "will
-  scaduto" e ritorna `(None, tx)` per innescare firma + broadcast
-  dell'invalidazione. L'utente preme di nuovo **Prepare** per ricostruire,
-  rifirmare e reinviare la nuova eredita (due passi espliciti, per maggior
-  controllo).
-- **`gui/qt/window.py`** (`build_inheritance_transaction`): aggiunto lo stesso
-  ramo per completezza del percorso alternativo, con messaggio esplicativo.
-- **`gui/qt/common.py`**: `WillPostponedException` esportato.
+  - `check_willexecutors_and_heirs`: the locktime comparison no longer uses the
+    stored heir entry (`their[2]`), which is updated in memory together with the
+    new value at the moment of postponement and would therefore always look
+    equal. It now compares the requested locktime with **`w.tx.locktime`**, i.e.
+    the locktime **frozen** in the signed transaction (immutable, and the one
+    the will-executors hold). Three cases: unchanged → coherent; new > tx on a
+    signed/sent will → `WillPostponedException`; new > tx on a will never sent
+    → simple rebuild (no on-chain fee).
+- **`gui/qt/dialogs.py`** (`BalBuildWillDialog.task_phase1`, the real path used
+  by **Tools → Prepare**): added the `except WillPostponedException` branch
+  **before** `NotCompleteWillException`; it behaves like the "expired will"
+  case and returns `(None, tx)` to trigger signing + broadcasting of the
+  invalidation. The user presses **Prepare** again to rebuild, re-sign and
+  re-send the new inheritance (two explicit steps, for greater control).
+- **`gui/qt/window.py`** (`build_inheritance_transaction`): added the same
+  branch for completeness of the alternative path, with an explanatory message.
+- **`gui/qt/common.py`**: `WillPostponedException` exported.
 
-### NUOVA COLONNA "Server" nella lista transazioni
-Per dare all'utente visibilita costante sullo stato online delle proprie
-transazioni di eredita, e stata aggiunta una colonna dedicata **"Server"** in
-`PreviewList` (`gui/qt/lists.py`), con etichetta sempre leggibile
-(`Confirmed on server`, `Sent (not checked)`, `Send failed`, `Not on server`,
-`Signed (not sent)`, `Not sent`) e **tooltip** con URL del will-executor e
-stato. Le funzioni `server_status_text()` e `server_status_tooltip()` sono in
-`gui/qt/theme.py` e riusano gli stessi flag di stato gia esistenti.
+### NEW "Server" COLUMN in the transactions list
+To give the user constant visibility on the online status of their inheritance
+transactions, a dedicated **"Server"** column was added in `PreviewList`
+(`gui/qt/lists.py`), with an always-readable label (`Confirmed on server`,
+`Sent (not checked)`, `Send failed`, `Not on server`, `Signed (not sent)`,
+`Not sent`) and a **tooltip** with the will-executor URL and status. The
+functions `server_status_text()` and `server_status_tooltip()` are in
+`gui/qt/theme.py` and reuse the same already-existing status flags.
 
 ### Test
-- I 182 test ufficiali continuano a passare; smoke test ed external-zip test
-  OK; `ruff` senza nuove segnalazioni reali.
-- Verificato sui dati reali del log dell'utente: il posticipo di un'eredita
-  firmata ora rileva correttamente la condizione e avvia l'invalidazione.
+- The 182 official tests keep passing; smoke test and external-zip test OK;
+  `ruff` with no new real warnings.
+- Verified against the real data from the user's log: postponing a signed
+  inheritance now correctly detects the condition and starts the invalidation.
 
-Confermato dall'utente: **"mi pare che funziona"**.
+Confirmed by the user: **"it seems to work"**.
 
-## 15. TENTATIVO E REVERT: fix doppia invalidazione al posticipo (v0.3.1 -> v0.3.2)
+## 15. ATTEMPT AND REVERT: fix for double invalidation on postpone (v0.3.1 -> v0.3.2)
 
-### v0.3.1 (RITIRATA)
-Per risolvere la doppia firma dell'invalidazione al posticipo, era stato
-introdotto `Will.mark_invalidated_by_tx()`, chiamato in
-`loop_broadcast_invalidating` dopo il broadcast dell'invalidazione, per marcare
-`INVALIDATED` le will che spendevano gli stessi UTXO della tx di invalidazione
-e persistere lo stato con `save_willitems`.
+### v0.3.1 (WITHDRAWN)
+To solve the double signing of the invalidation on postpone,
+`Will.mark_invalidated_by_tx()` had been introduced, called in
+`loop_broadcast_invalidating` after broadcasting the invalidation, to mark as
+`INVALIDATED` the wills that spent the same UTXOs as the invalidation tx and to
+persist the state with `save_willitems`.
 
-### Perche e stata ritirata
-La modifica ha introdotto una regressione grave segnalata dall'utente:
-**la lista eredita mostrava ancora le vecchie eredita e l'aggiornamento di
-eredi/date risultava incoerente**.
+### Why it was withdrawn
+The change introduced a serious regression reported by the user:
+**the inheritance list still showed the old inheritances and the update of
+heirs/dates was inconsistent**.
 
-Causa: `loop_broadcast_invalidating` e il punto di broadcast usato per **TUTTI**
-i tipi di invalidazione (posticipo, CheckAlive, will scaduto/anticipato), non
-solo per il posticipo. Inoltre il metodo marcava e **persisteva** lo stato
-`INVALIDATED` su tutte le will item che condividevano gli UTXO del wallet
-(tipicamente tutte). Queste will item invalidate restavano poi in memoria e su
-disco, inquinando la ricostruzione di eredi/date e lasciando vecchie voci nella
-lista.
+Cause: `loop_broadcast_invalidating` is the broadcast point used for **ALL**
+types of invalidation (postpone, CheckAlive, expired/anticipated will), not
+only for postpone. In addition, the method marked and **persisted** the
+`INVALIDATED` state on all the will items that shared the wallet's UTXOs
+(typically all of them). These invalidated will items then stayed in memory and
+on disk, polluting the rebuild of heirs/dates and leaving old entries in the
+list.
 
-### v0.3.2 (questa versione): REVERT completo
-- Rimosso `Will.mark_invalidated_by_tx()` da `core/will.py`.
-- Rimossa la chiamata in `gui/qt/dialogs.py` (`loop_broadcast_invalidating`):
-  il metodo torna **identico** alla v0.3.0.
-- Rimossi i due test relativi; mantenuto solo l'assert di gerarchia su
-  `WillPostponedException` (corretto e indipendente).
-- `core/will.py` e `gui/qt/dialogs.py` sono ora **byte-identici** alla v0.3.0
-  funzionante (verificato con `git diff a394cde`).
+### v0.3.2 (this version): full REVERT
+- Removed `Will.mark_invalidated_by_tx()` from `core/will.py`.
+- Removed the call in `gui/qt/dialogs.py` (`loop_broadcast_invalidating`): the
+  method goes back to being **identical** to v0.3.0.
+- Removed the two related tests; kept only the hierarchy assertion on
+  `WillPostponedException` (correct and independent).
+- `core/will.py` and `gui/qt/dialogs.py` are now **byte-identical** to the
+  working v0.3.0 (verified with `git diff a394cde`).
 
-Il bug della doppia invalidazione al posticipo resta quindi **aperto** e andra
-riaffrontato in modo piu mirato (senza toccare il percorso di broadcast comune e
-senza persistere stati su will che condividono gli UTXO), previa conferma
-dell'utente. La priorita era ripristinare il comportamento corretto di
-lista/eredi/date.
+The double-invalidation-on-postpone bug therefore remains **open** and will
+have to be tackled in a more targeted way (without touching the common
+broadcast path and without persisting states on wills that share the UTXOs),
+subject to the user's confirmation. The priority was to restore the correct
+behaviour of the list/heirs/dates.
 
-## 16. Aggiornamenti mancati, Check/Close coerenti, e rifinitura UI (v0.3.2)
+## 16. Missed updates, consistent Check/Close, and UI polish (v0.3.2)
 
-### FIX 1 - Rimozione di un erede rilevata su Check / chiusura Electrum
-`core/will.py` (`check_willexecutors_and_heirs`): prima il plugin
-rilevava solo l'**aggiunta** di un erede (raise `HeirNotFoundException` quando un
-erede corrente non era piu nella will). Mancava il caso inverso: la
-**rimozione** di un erede. Aggiunto il ramo `else` che lancia
-`HeirNotFoundException` anche quando la will porta ancora un erede che non e piu
-presente nel set di eredi corrente. Cosi la ricostruzione dell'eredita scatta su
-**Check** e alla **chiusura di Electrum** (entrambi usano lo stesso percorso
-`BalBuildWillDialog.build_will_task()`), come deciso dall'utente: nessun
-aggiornamento automatico dopo la modifica, solo manuale con Check / alla
-chiusura.
+### FIX 1 - Removal of an heir detected on Check / Electrum close
+`core/will.py` (`check_willexecutors_and_heirs`): previously the plugin
+detected only the **addition** of an heir (raising `HeirNotFoundException` when
+a current heir was no longer in the will). The opposite case was missing: the
+**removal** of an heir. Added the `else` branch that raises
+`HeirNotFoundException` also when the will still carries an heir that is no
+longer present in the current heir set. This way the inheritance rebuild is
+triggered on **Check** and on **Electrum close** (both use the same
+`BalBuildWillDialog.build_will_task()` path), as decided by the user: no
+automatic update after the change, only a manual one via Check / on close.
 
-### FIX 2 - Check interroga i server anche per le will gia inviate
-`core/will.py` (nuovo `Will.needs_server_check(w)`) e
-`gui/qt/lists.py` (`PreviewList.check`): prima il Check interrogava i server solo
-per le will in stato `PUSHED`. Le will gia inviate ma rimaste su "New / Not sent"
-non venivano ricontrollate ("nothing to do"). Ora `needs_server_check` include
-ogni will **VALID** con un will-executor e **non ancora CHECKED**, anche se non
-in stato `PUSHED`. Stesso controllo usato sia dal pulsante Check sia da
+### FIX 2 - Check also queries the servers for already-sent wills
+`core/will.py` (new `Will.needs_server_check(w)`) and `gui/qt/lists.py`
+(`PreviewList.check`): previously Check queried the servers only for wills in
+the `PUSHED` state. Wills already sent but left at "New / Not sent" were not
+re-checked ("nothing to do"). Now `needs_server_check` includes every **VALID**
+will with a will-executor that is **not yet CHECKED**, even if not in the
+`PUSHED` state. The same check is used both by the Check button and by
 `on_close`.
 
-### FIX 3 - Hide invalidated/replaced da finestra Impostazioni aggiornava la lista
-`core/plugin_base.py` (nuovo `sync_hide_filters()`) e
-`gui/qt/window.py` (`update_all`): le checkbox "Hide Replaced" / "Hide
-Invalidated" nella finestra Impostazioni scrivono direttamente la config
-(`BalConfig.set`) senza toccare i flag in cache `_hide_invalidated` /
-`_hide_replaced` usati dalla lista per filtrare. Risultato: la lista continuava
-a filtrare col valore vecchio finche non si riavviava Electrum. Ora
-`update_all()` chiama `sync_hide_filters()` che ri-legge i flag dalla config,
-quindi qualunque sorgente del cambiamento (toolbar o finestra Impostazioni)
-aggiorna subito la lista.
+### FIX 3 - Hide invalidated/replaced from the Settings window updated the list
+`core/plugin_base.py` (new `sync_hide_filters()`) and `gui/qt/window.py`
+(`update_all`): the "Hide Replaced" / "Hide Invalidated" checkboxes in the
+Settings window write the config directly (`BalConfig.set`) without touching the
+cached flags `_hide_invalidated` / `_hide_replaced` that the list uses to
+filter. Result: the list kept filtering with the old value until Electrum was
+restarted. Now `update_all()` calls `sync_hide_filters()`, which re-reads the
+flags from the config, so whatever the source of the change (toolbar or
+Settings window) the list updates immediately.
 
-### Rifinitura UI - Risultati in grassetto nel dialog "Building Will"
-`gui/qt/dialogs.py` (`BalBuildWillDialog`): i **risultati** mostrati a destra di
-ogni riga di stato (es. `Ok`, `Ko`, `Nothing to do`, `Skipped`, `Wait`,
-`Timeout`) sono ora resi in **grassetto**, mantenendo i loro colori
-(verde/rosso/giallo). Le etichette di stato a sinistra restano in peso normale.
-Modifica centralizzata negli helper `msg_ok`, `msg_error`, `msg_warning`,
-`msg_set_status`, piu le righe dei will-executor (push e check) che ora mostrano
-`Ok/Ko` e `True/False` in grassetto + colore (verde/rosso).
+### UI polish - Bold results in the "Building Will" dialog
+`gui/qt/dialogs.py` (`BalBuildWillDialog`): the **results** shown to the right
+of each status line (e.g. `Ok`, `Ko`, `Nothing to do`, `Skipped`, `Wait`,
+`Timeout`) are now rendered in **bold**, keeping their colours
+(green/red/yellow). The status labels on the left stay in normal weight. The
+change is centralized in the helpers `msg_ok`, `msg_error`, `msg_warning`,
+`msg_set_status`, plus the will-executor lines (push and check) that now show
+`Ok/Ko` and `True/False` in bold + colour (green/red).
 
 ### Test
-- 186 test ufficiali passano; smoke test, external-zip test e simulazione dei
-  flussi di aggiornamento (`tests/sim_update_flows.py`) OK; `ruff` senza nuove
-  segnalazioni reali (solo falsi positivi pre-esistenti da star-import).
-- Aggiunti test in `tests/test_core_will.py`:
+- 186 official tests pass; smoke test, external-zip test and the update-flow
+  simulation (`tests/sim_update_flows.py`) OK; `ruff` with no new real warnings
+  (only pre-existing false positives from star-imports).
+- Added tests in `tests/test_core_will.py`:
   `test_check_heirs_unchanged_is_coherent`,
   `test_check_heir_removed_triggers_rebuild`,
   `test_check_heir_added_triggers_rebuild`, `test_needs_server_check`.
 
-Confermato dall'utente sui dati reali: dopo Sign -> Broadcast -> Check le
-transazioni gia inviate sono tornate verdi ("confirmed on server"); la lista
-torna pulita; il grassetto e l'aggiornamento delle hide-flag funzionano.
+Confirmed by the user against real data: after Sign -> Broadcast -> Check the
+already-sent transactions turned green again ("confirmed on server"); the list
+goes back clean; the bold rendering and the hide-flag update work.
 
 ## 17. UI polish and bug fix — signed-tx colour, wizard, Building Will dialog (v0.3.3)
 
