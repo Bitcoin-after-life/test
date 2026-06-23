@@ -608,7 +608,8 @@ class BalWindow:
                 try:
                     self.check_will()
                     for wid, _w in self.willitems.items():
-                        self.wallet.set_label(wid, "BAL Transaction")
+                        # Label shown in Electrum's History tab for inheritance txs.
+                        self.wallet.set_label(wid, "BAL Inheritance transaction")
                     rebuilt_ok = True
                 except WillExpiredException as e:
                     self.invalidate_will()
@@ -699,7 +700,8 @@ class BalWindow:
                         "Please sign and broadcast this transaction to invalidate current will"
                     )
                 )
-                self.wallet.set_label(result.txid(), "BAL Invalidate")
+                # Label shown in Electrum's History tab for invalidate txs.
+                self.wallet.set_label(result.txid(), "BAL Invalidate transaction")
                 self.show_transaction(result)
             else:
                 self.show_message(_("No transactions to invalidate"))

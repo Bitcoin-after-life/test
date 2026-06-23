@@ -784,3 +784,72 @@ the DATA mode and the RAW mode, while keeping the **CHECK ALIVE** title in bold.
 
 **Outcome:** DONE (delivered as a test ZIP v0.3.8 for the user to try before
 commit).
+
+## 15. UI batch (v0.3.9): clearer "will expired" message, History labels, settings checkbox, wizard button
+
+**Context:** A batch of four small UI improvements requested by the user
+(internally tracked as TASK A/B/C/D).
+
+**Changes:**
+- **(A) "Will expired" message — clearer and not alarming.** Rewrote the message
+  raised by `Will.check_will_expired()` (`bal/core/will.py`): the will id is now
+  shortened (first 8 + last 8 chars, e.g. `9f1b0a75…fed9ae1b`) and the locktime
+  is shown as a readable UTC date (e.g. `2026-06-22 11:00 UTC`) instead of a raw
+  UNIX timestamp, with an explanation that the will will be invalidated and
+  re-signed. Two small helpers were added (`_short_will_id`, `_format_locktime`)
+  and `datetime`/`timezone` are now imported at module top. In the "Build your
+  will" wizard (`bal/gui/qt/dialogs.py`) an expired will is now shown in the
+  WARNING colour (orange) instead of the ERROR colour (red), because it is an
+  expected part of the flow, not an error.
+- **(B) History tab labels (text only).** Renamed the labels written to
+  Electrum's History tab: inheritance transactions now read
+  `BAL Inheritance transaction` (was `BAL Transaction`, updated in both
+  `dialogs.py` and `window.py`) and the invalidate transaction now reads
+  `BAL Invalidate transaction` (was `BAL Invalidate`, in `window.py`). Colours
+  are left to Electrum's defaults (outgoing transactions are shown in red by
+  Electrum itself) to keep the change simple and robust.
+- **(C) "No will-executor TX" checkbox in plugin settings.** Added a checkbox to
+  the settings dialog (`bal/gui/qt/plugin.py`) bound to the existing
+  `NO_WILLEXECUTOR` config (default ON), the same config used by the wizard's
+  will-executor download window, so the two stay in sync. Its help button reads:
+  "Create a will that does not require a Will-executor; it can be saved, for
+  example, on a USB stick, and a copy can be given to the heirs." It is also
+  included in the "Reset setting" action so a reset restores it to ON.
+- **(D) Wizard button label.** The main wizard button now reads `Build Your Will`
+  (was `Create your will`, `bal/gui/qt/lists.py`), matching the tooltip and the
+  rest of the codebase which already call it the "Build your will" wizard.
+
+- **(A2) Two-line expired message.** Following user feedback that the orange
+  message was too long on a single line, a `<br>` line break was added in
+  `Will.check_will_expired()` so the second sentence ("too late to anticipate,
+  the will will be invalidated and re-signed.") is shown on its own line. The
+  message is rendered as HTML by `msg_warning()`, so the `<br>` tag is honoured.
+- **(A3) Auto-invalidate regression fix when adding an heir to an expired will.**
+  While verifying TASK A a regression was found: when an heir was added to an
+  already-expired will through the wizard, the automatic invalidation window no
+  longer opened (the user had to restart Electrum or press Check). Root cause:
+  in `dialogs.py::task_phase1`, adding an heir first raises
+  `HeirNotFoundException` (so the will is rebuilt by `build_will()`), and the
+  freshly rebuilt transactions are themselves expired, raising
+  `WillExpiredException` on the INNER `check_will()`. The original handler there
+  did `return False, None`, which never triggered invalidation. The fix makes
+  the wizard, in that case, behave exactly like the "Tools -> Invalidate" menu:
+  instead of trying to auto-open the invalidation transaction window (which
+  proved unreliable — depending on the OS window manager the transaction window
+  ended up BEHIND the main wallet window when the wizard closed, and an
+  automatic re-check loop could ask to invalidate repeatedly before the
+  invalidation tx reached the mempool), the wizard now closes and shows a clear
+  instruction popup telling the user to run `Tools -> Invalidate` themselves and
+  then press `Check`. That menu path is already known to work perfectly (its
+  transaction window stays in front and sets the `BAL Invalidate transaction`
+  history label) and it makes the user consciously aware of this deliberate,
+  important action. The reasoning behind this choice is documented in the code.
+
+**Verification:**
+- `py_compile` on all changed files: OK.
+- `ruff check`: no new errors (only the pre-existing star-import noise and
+  pre-existing F841 warnings, none in the changed lines).
+- Full test suite: `239 passed`.
+
+**Outcome:** DONE (delivered as test ZIP v0.3.9, confirmed OK by the user before
+commit).

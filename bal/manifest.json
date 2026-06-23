@@ -1,7 +1,7 @@
 {
     "name": "bal",
     "fullname": "Bitcoin After Life",
-    "version": "0.3.8",
+    "version": "0.3.9",
     "description": "Provides free and decentralized Bitcoin inheritance support. Build time-locked 'will' transactions that transfer funds to your heirs if you stop refreshing them (dead-man's switch), optionally relayed by will-executor servers.",
     "author": "Svatantrya",
     "licence": "MIT",
