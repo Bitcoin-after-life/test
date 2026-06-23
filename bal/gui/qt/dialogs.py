@@ -917,9 +917,19 @@ class BalBuildWillDialog(BalDialog):
                 _("Invalidate your old will"), parent=self
             )
             if password is False:
+                # The user cancelled the password prompt for the invalidation.
+                # We must NOT call self.wait(3) here: on_success_phase1 runs in
+                # the GUI thread, so wait()'s time.sleep() would freeze the UI
+                # for several seconds. While frozen the dialog cannot repaint
+                # the area it just resized, leaving a black, undrawn rectangle
+                # at the bottom of the "Building Will" window (the reported bug).
+                #
+                # Instead, mark the invalidation as "Aborted" and offer a
+                # non-blocking "Close" button (the same helper used by the
+                # normal finish path), so the user can read the outcome and
+                # dismiss the dialog when they want, without blocking the GUI.
                 self.msg_set_invalidating(_("Aborted"))
-                self.wait(3)
-                self.close()
+                self._add_close_button()
                 return
             self.thread.add(
                 partial(self.invalidate_task, password, self.bal_window, tx),

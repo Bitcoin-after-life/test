@@ -705,13 +705,15 @@ class WillSettingsWidget(QWidget):
         self.apply_editable_dates()
 
     def apply_editable_dates(self):
-        """Re-read the EDITABLE_DATES setting and lock/unlock the date fields.
+        """Re-read the EDITABLE_DATES setting and lock/unlock the editable fields.
 
         Outside the "Build your will" wizard (``read_only=True``) the
-        delivery-time and check-alive dates are display-only by default. When
-        the user ticks "Editable dates" in the settings they become editable
-        here too. The fee field always stays read-only outside the wizard,
-        because C2 only concerns the dates.
+        delivery-time, check-alive dates AND the mining fee are display-only by
+        default. When the user ticks "Editable dates" in the settings, all three
+        fields (locktime, threshold and fee) become editable here too; when it
+        is unticked they all go back to read-only. The fee follows exactly the
+        same rule as the dates (it used to stay always read-only, but the user
+        asked for the fee to be editable together with the dates).
 
         This is safe to call repeatedly: it only adjusts the read-only state of
         the already-created sub-widgets, it does not rebuild anything. It is the
@@ -732,7 +734,9 @@ class WillSettingsWidget(QWidget):
 
         self.widgets["locktime"].set_read_only(not editable_dates)
         self.widgets["threshold"].set_read_only(not editable_dates)
-        self.widgets["baltx_fees"].set_read_only(True)
+        # The fee now follows the very same "Editable dates" rule as the dates:
+        # editable outside the wizard only when the setting is ticked.
+        self.widgets["baltx_fees"].set_read_only(not editable_dates)
 
     def create_alarms(self, alarm_start, alarm_end):
         """Build the VALARM reminder blocks for the .ics event (Group D / D1).

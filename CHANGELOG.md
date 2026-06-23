@@ -617,3 +617,64 @@ the plugin, all driven by a single self-contained fake wallet named
 - Full test suite: `239 passed` (217 previous + 22 new Group E tests).
 
 **Outcome:** DONE (delivered as a ZIP for user testing before commit).
+
+## 10. Fix - black bar when cancelling the "invalidate old will" signature
+
+**Bug:** when the user postpones a will's delivery date and the plugin asks to
+invalidate the previous (earlier-locktime) will first, cancelling the signature
+prompt left a black/undrawn rectangle at the bottom of the "Building Will"
+dialog.
+
+**Root cause:** in `bal/gui/qt/dialogs.py`, `on_success_phase1` handled the
+cancelled-invalidation case with `self.wait(3)` followed by `self.close()`.
+`wait()` uses `time.sleep()`, but `on_success_phase1` runs in the GUI thread, so
+the sleep froze the interface for several seconds. While frozen, the dialog
+could not repaint the area it had just resized, leaving an undrawn (black)
+region at the bottom of the window.
+
+**Fix (Variant A):**
+- `bal/gui/qt/dialogs.py`
+  - In `on_success_phase1`, the cancelled-invalidation branch no longer calls
+    the blocking `self.wait(3)` + `self.close()`. It now marks the step as
+    "Aborted" and shows the existing non-blocking "Close" button
+    (`_add_close_button()`), so the GUI is never blocked and the bottom of the
+    dialog repaints correctly. The user reads the outcome and dismisses the
+    dialog when ready, consistent with the other end-of-flow branches.
+
+**Verification:**
+- `py_compile` on the changed file: OK.
+- `ruff check`: no new errors (only the pre-existing F401/F403/F405 star-import
+  noise and an unrelated F841 at line 615).
+- Full test suite: `239 passed`.
+
+**Outcome:** DONE (delivered as a ZIP for user testing before commit).
+
+## 11. Fee field now follows the "Editable dates" setting
+
+**Request:** the "Editable dates" checkbox in the plugin settings (added in
+Group C / C2) lets the user edit the delivery-time and check-alive dates
+outside the wizard. The mining-fee field next to them, however, stayed always
+read-only. The user asked for the fee to follow the same rule as the dates.
+
+**What changed:**
+- `bal/gui/qt/widgets.py`
+  - In `WillSettingsWidget.apply_editable_dates()`, the fee widget
+    (`baltx_fees`) is now locked/unlocked with `set_read_only(not
+    editable_dates)`, exactly like the locktime and threshold widgets, instead
+    of being forced to `set_read_only(True)`. The method docstring was updated
+    to state that the fee follows the same "Editable dates" rule.
+
+**Effect:** with "Editable dates" ticked, the delivery time, check-alive date
+AND the fee become editable outside the wizard; with it unticked, all three go
+back to read-only. Inside the wizard everything stays editable as before. The
+change takes effect immediately (the method is already re-run from
+`BalWindow.update_all()`), with no need to reopen the window.
+
+**Verification:**
+- `py_compile` on the changed file: OK.
+- `ruff check`: no new errors (only pre-existing star-import noise and unrelated
+  F841 warnings at lines 547 / 792).
+- Full test suite: `239 passed`.
+
+**Outcome:** DONE (delivered together with fix #10 in a single ZIP for user
+testing before commit).
