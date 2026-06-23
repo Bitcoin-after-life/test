@@ -8,7 +8,7 @@ the other ``test_group_*`` and ``test_core_*`` suites.
 
 The four sections are:
 
-* E1 - calendar / .ics:  reminder-offset distribution, VALARM/TRIGGER shape,
+* E1 - calendar / .ics:  reminder-offset distribution, separate-VEVENT shape,
   description escaping and temporary .ics file creation.
 * E2 - inheritance / states:  WillItem status transitions and heir-change
   detection for giovanna7's inheritance.
@@ -170,38 +170,53 @@ def test_e1_reminder_offsets_single():
     assert compute_reminder_offsets(10, 1) == [1]
 
 
-def test_e1_build_valarms_for_giovanna():
-    """Build the VALARM blocks for giovanna7 the same way create_alarms does
-    (offsets -> TRIGGER lines) and verify their shape.
+def test_e1_build_separate_events_for_giovanna():
+    """Build the SEPARATE reminder VEVENTs for giovanna7 the same way
+    open_or_save_calendar does (one VEVENT per offset, each on its own date)
+    and verify their shape.
 
-    We replicate the pure part of WillSettingsWidget.create_alarms here so the
-    test stays GUI-free (no Qt widget construction), while still asserting the
-    exact iCalendar TRIGGER syntax the plugin emits.
+    We replicate the pure part of WillSettingsWidget.open_or_save_calendar here
+    so the test stays GUI-free (no Qt widget construction), while still
+    asserting the exact iCalendar structure the plugin emits: N distinct events,
+    unique UIDs, "(reminder N/total)" summaries, and the last event placed one
+    day before the locktime.
     """
-    description = (
-        "BAL reminder: check in before your will is delivered to your heirs."
-    )
+    from datetime import datetime, timedelta, timezone
+
+    # 30-day period -> offsets [30, 16, 1] (the last one = 1 day before deadline).
+    locktime = datetime(2026, 7, 23, 9, 0, 0, tzinfo=timezone.utc)
     offsets = compute_reminder_offsets(30, 3)
+    total = len(offsets)
+    wallet = "giovanna7"
+    summary_base = f"BAL - Will execution of {wallet}"
 
-    lines = []
-    for offset in offsets:
-        lines.extend(
-            [
-                "BEGIN:VALARM",
-                f"TRIGGER;RELATED=END:-P{offset}D",
-                "ACTION:DISPLAY",
-                f"DESCRIPTION:{BalCalendar.ical_escape(description)}",
-                "END:VALARM",
-            ]
-        )
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0"]
+    for idx, offset in enumerate(offsets, start=1):
+        event_dt = BalCalendar.format_time(locktime - timedelta(days=offset))
+        summary = BalCalendar.ical_escape(f"{summary_base} (reminder {idx}/{total})")
+        lines.extend([
+            "BEGIN:VEVENT",
+            f"UID:bal-{wallet}-{offset}d",
+            f"DTSTART:{event_dt}",
+            f"DTEND:{event_dt}",
+            f"SUMMARY:{summary}",
+            "END:VEVENT",
+        ])
+    lines.append("END:VCALENDAR")
 
-    # One full VALARM block (5 lines) per reminder offset.
-    assert lines.count("BEGIN:VALARM") == len(offsets)
-    assert lines.count("END:VALARM") == len(offsets)
-    assert len(lines) == 5 * len(offsets)
-    # The trigger uses "days before the event END" (the deadline).
-    assert "TRIGGER;RELATED=END:-P30D" in lines
-    assert "TRIGGER;RELATED=END:-P1D" in lines
+    # One separate VEVENT per reminder offset (no VALARM blocks any more).
+    assert lines.count("BEGIN:VEVENT") == len(offsets)
+    assert lines.count("END:VEVENT") == len(offsets)
+    assert "BEGIN:VALARM" not in lines
+    # UIDs are unique per event so calendars do not merge them.
+    uids = [ln for ln in lines if ln.startswith("UID:")]
+    assert len(uids) == len(set(uids)) == len(offsets)
+    # Summaries are numbered to tell the events apart.
+    assert any("(reminder 1/3)" in ln for ln in lines)
+    assert any("(reminder 3/3)" in ln for ln in lines)
+    # The LAST event (offset 1) sits one day before the locktime.
+    last_dt = BalCalendar.format_time(locktime - timedelta(days=1))
+    assert f"DTSTART:{last_dt}" in lines
 
 
 def test_e1_event_description_escaping():

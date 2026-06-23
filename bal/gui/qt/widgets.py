@@ -738,85 +738,97 @@ class WillSettingsWidget(QWidget):
         # editable outside the wizard only when the setting is ticked.
         self.widgets["baltx_fees"].set_read_only(not editable_dates)
 
-    def create_alarms(self, alarm_start, alarm_end):
-        """Build the VALARM reminder blocks for the .ics event (Group D / D1).
+    def open_or_save_calendar(self):
+        """Build and save an .ics calendar file with SEPARATE reminder events.
 
-        The number of reminders is read from the NUM_REMINDERS setting (default
-        3, capped at 5 by the settings dialog). They are spread uniformly across
-        the check-alive period and always fall before the delivery deadline; if
-        the period is shorter than the requested number, at most one reminder
-        per day is produced (see compute_reminder_offsets).
+        Group D / D1 (revised). Instead of a single calendar event holding
+        internal VALARM reminders (which most calendars show as just one entry),
+        this exports N *separate* VEVENTs, one per reminder date, so the user
+        sees several distinct appointments in their calendar.
 
-        Args:
-            alarm_start: the check-alive datetime (start of the period).
-            alarm_end: the delivery-time / locktime datetime (the deadline).
+        The number of events is read from the NUM_REMINDERS setting (default 3,
+        capped at 5 by the settings dialog). Their dates are computed with
+        ``compute_reminder_offsets``: the offsets are spread uniformly across the
+        check-alive period and the LAST event always falls one day before the
+        delivery deadline (locktime). If the period is shorter than the
+        requested number of reminders, at most one event per day is produced.
 
-        Returns:
-            A list of .ics text lines (possibly empty) describing the VALARMs.
+        Each event:
+            * is placed on ``locktime - offset`` days (its own visible date);
+            * carries a unique UID (``bal-<wallet>-<offset>d``) so calendars do
+              not merge the events into one;
+            * has its summary suffixed with " (reminder N/total)" to tell the
+              events apart at a glance;
+            * reuses the configured EVENT_DESCRIPTION (with the usual
+              ``$wallet_name`` / ``$heirs_complete`` substitutions).
+
+        The resulting file is written to a temp location and then copied to the
+        path the user picks in the save dialog (default name "BAL_will_event.ics"
+        on the Desktop).
         """
-        days = (alarm_end - alarm_start).days
+        now = BalCalendar.format_time(datetime.now())
 
-        # How many reminders the user asked for (default 3 if unreadable).
+        # locktime = delivery deadline; threshold = start of the check-alive
+        # period. Both are datetimes exposed by the date widgets as ``.alarm``.
+        locktime = self.widgets["locktime"].alarm
+        threshold = self.widgets["threshold"].alarm
+
+        # Whole days available between check-alive and the deadline.
+        days = (locktime - threshold).days
+
+        # How many reminder events the user asked for (default 3 if unreadable).
         try:
             count = int(self.bal_window.bal_plugin.NUM_REMINDERS.get())
         except Exception:
             count = 3
 
+        # Day-offsets BEFORE the deadline, e.g. [30, 16, 1]. The list always
+        # ends with 1 (one day before the locktime) when >= 2 reminders fit.
         offsets = compute_reminder_offsets(days, count)
 
-        # Reminder text shown by the calendar app when each alarm fires.
-        description = _(
-            "BAL reminder: check in before your will is delivered to your heirs."
+        # Per-event heir details and the shared description/summary templates.
+        heirs_details = "\r\n".join(
+            f" {heir} - {self.bal_window.heirs[heir][0]}, {self.bal_window.heirs[heir][1]}"
+            for heir in self.bal_window.heirs
         )
-
-        lines = []
-        for offset in offsets:
-            lines.extend(
-                [
-                    "BEGIN:VALARM",
-                    # Fire "offset" days before the event end (the deadline).
-                    f"TRIGGER;RELATED=END:-P{offset}D",
-                    "ACTION:DISPLAY",
-                    f"DESCRIPTION:{BalCalendar.ical_escape(description)}",
-                    "END:VALARM",
-                ]
-            )
-        return lines
-
-    def open_or_save_calendar(self):
-        now = BalCalendar.format_time(datetime.now())
-
-        locktime = self.widgets["locktime"].alarm
-        threshold = self.widgets["threshold"].alarm
-        alarm_end = BalCalendar.format_time(locktime)
-        alarm_start = BalCalendar.format_time(threshold)
-
-        heirs_details = "\r\n".join(f" {heir} - {self.bal_window.heirs[heir][0]}, {self.bal_window.heirs[heir][1]}" for heir in self.bal_window.heirs)
         event_description = BalCalendar.ical_escape(
-                f"{self.bal_window.bal_plugin.EVENT_DESCRIPTION.get()}".replace("$wallet_name",str(self.bal_window.wallet)).replace("$heirs_complete",heirs_details)
+            f"{self.bal_window.bal_plugin.EVENT_DESCRIPTION.get()}"
+            .replace("$wallet_name", str(self.bal_window.wallet))
+            .replace("$heirs_complete", heirs_details)
         )
-        #event_description =f"{event_description}{heirs_details}"
-        uid = f"bal-{str(self.bal_window.wallet)}"
-        summary = BalCalendar.ical_escape(
-            f"{self.bal_window.bal_plugin.EVENT_SUMMARY.get()}".replace("$wallet_name",str(self.bal_window.wallet))
+        summary_base = (
+            f"{self.bal_window.bal_plugin.EVENT_SUMMARY.get()}"
+            .replace("$wallet_name", str(self.bal_window.wallet))
         )
+
         lines = [
             "BEGIN:VCALENDAR",
             "VERSION:2.0",
             f"PRODID:-//Bitcoin After Life//Electrum Plugin/{BalPlugin.__version__}",
-            "BEGIN:VEVENT",
-            f"UID:{uid}",
-            f"DTSTAMP:{now}",
-            f"DTSTART:{alarm_end}",
-            f"DTEND:{alarm_end}",
-            f"SUMMARY:{summary}",
-            f"DESCRIPTION:{event_description}",
         ]
-        lines.extend(self.create_alarms(threshold, locktime))
-        lines.extend([
-            "END:VEVENT",
-            "END:VCALENDAR",
-        ])
+
+        # One separate VEVENT per reminder offset (its own date in the calendar).
+        total = len(offsets)
+        for idx, offset in enumerate(offsets, start=1):
+            # The visible date of this event: "offset" days before the deadline.
+            event_dt = BalCalendar.format_time(locktime - timedelta(days=offset))
+            # Suffix the summary so the N events are easy to tell apart.
+            summary = BalCalendar.ical_escape(
+                f"{summary_base} (reminder {idx}/{total})"
+            )
+            lines.extend([
+                "BEGIN:VEVENT",
+                # Offset in the UID keeps each event unique (no merging).
+                f"UID:bal-{str(self.bal_window.wallet)}-{offset}d",
+                f"DTSTAMP:{now}",
+                f"DTSTART:{event_dt}",
+                f"DTEND:{event_dt}",
+                f"SUMMARY:{summary}",
+                f"DESCRIPTION:{event_description}",
+                "END:VEVENT",
+            ])
+
+        lines.append("END:VCALENDAR")
 
         lines = [s.rstrip("\r\n") for s in lines]
         ics_content = "\r\n".join(lines) + "\r\n"
@@ -829,7 +841,7 @@ class WillSettingsWidget(QWidget):
         # dialog opens on the user's Desktop by default, with an .ics filter and
         # a sensible default filename.
         desktop = BalCalendar.desktop_dir()
-        default_path = os.path.join(desktop, "will_event.ics")
+        default_path = os.path.join(desktop, "BAL_will_event.ics")
         target = getSaveFileName(
             parent=self.bal_window.window,
             title=_("Save calendar reminder (.ics)"),
