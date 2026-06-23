@@ -709,3 +709,50 @@ asked to translate the file *names* of two of them.
 
 **Outcome:** DONE (documentation-only change; no plugin code touched, so the
 zip-first step does not apply).
+
+## 13. Calendar (.ics): separate reminder events instead of one event with alarms
+
+**Request:** the exported `.ics` added a single calendar entry (on the locktime)
+with internal VALARM reminders, which most calendars show as just one
+appointment. The user asked for **N separate events** (default 3), each with its
+own visible date, with the **last one one day before the inheritance locktime**.
+
+**What changed (option A):**
+- `bal/gui/qt/widgets.py`
+  - Rewrote `WillSettingsWidget.open_or_save_calendar()` to emit **one VEVENT
+    per reminder**, each placed on `locktime - offset` days, instead of one
+    VEVENT carrying VALARM blocks. The offsets come from the existing
+    `compute_reminder_offsets()`, so they are spread uniformly across the
+    check-alive period and the **last event is always one day before the
+    locktime**.
+  - Each event gets a **unique UID** (`bal-<wallet>-<offset>d`) so calendars do
+    not merge them, and its summary is suffixed with **" (reminder N/total)"**
+    to tell the events apart. The description still reuses `EVENT_DESCRIPTION`
+    with the usual `$wallet_name` / `$heirs_complete` substitutions.
+  - Removed the now-unused `create_alarms()` method (no more VALARM blocks).
+  - Changed the default save filename from `will_event.ics` to
+    **`BAL_will_event.ics`** (still defaulting to the Desktop).
+- `bal/gui/qt/common.py`
+  - Added `timedelta` to the `datetime` import (needed for the per-event date
+    arithmetic; re-exported via the GUI star-import).
+- `bal/core/plugin_base.py`
+  - Updated the `NUM_REMINDERS` comment to describe the new "separate events"
+    behaviour.
+- `tests/test_group_e_mock_giovanna7.py`
+  - Replaced the old VALARM-shape E1 test with
+    `test_e1_build_separate_events_for_giovanna`, which asserts the new
+    structure: N distinct VEVENTs, no VALARM, unique UIDs, numbered summaries,
+    and the last event one day before the locktime.
+
+**Effect:** with the default of 3 reminders over, say, a 30-day period, the
+`.ics` now produces 3 separate calendar appointments (e.g. 30, 16 and 1 day
+before the deadline) instead of a single one. Short periods automatically
+produce fewer events (at most one per day).
+
+**Verification:**
+- `py_compile` on the changed files: OK.
+- `ruff check`: no new errors.
+- Full test suite: see run below.
+
+**Outcome:** DONE (delivered as a test ZIP v0.3.7 for the user to try before
+commit).

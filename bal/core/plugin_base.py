@@ -91,7 +91,7 @@ class BalPlugin(BasePlugin):
     """
 
     _version = None
-    __version__ = "0.3.6"  # AUTOMATICALLY GENERATED DO NOT EDIT
+    __version__ = "0.3.7"  # AUTOMATICALLY GENERATED DO NOT EDIT
 
     # Command used to open an .ics calendar file, per operating system.
     default_app = {
@@ -181,12 +181,13 @@ class BalPlugin(BasePlugin):
         # stay display-only outside the wizard unless the user opts in.
         self.EDITABLE_DATES = BalConfig(config, "bal_editable_dates", False)
 
-        # NUM_REMINDERS (Group D / D1): how many reminder alarms (VALARM) the
-        # exported .ics calendar event should contain. The reminders are spread
-        # uniformly across the check-alive period and always fall BEFORE the
-        # delivery deadline. Default 3; the settings dialog caps it at 5 and the
-        # alarm builder additionally limits it to at most one alarm per available
-        # day.
+        # NUM_REMINDERS (Group D / D1): how many SEPARATE reminder events the
+        # exported .ics calendar should contain. Each reminder becomes its own
+        # VEVENT (its own date in the calendar). The dates are spread uniformly
+        # across the check-alive period and the LAST one always falls one day
+        # before the delivery deadline (locktime). Default 3; the settings
+        # dialog caps it at 5 and the date builder additionally limits it to at
+        # most one event per available day.
         self.NUM_REMINDERS = BalConfig(config, "bal_num_reminders", 3)
 
         self.NO_WILLEXECUTOR = BalConfig(config, "bal_no_willexecutor", True)
