@@ -127,6 +127,21 @@ class BalWizardDialog(BalDialog):
     def on_next_we(self):
         close_window = BalBuildWillDialog(self.bal_window)
         close_window.build_will_task()
+
+        # Run the SAME final server check as the "Check" button (allegato15,
+        # case B): previously the wizard only ran build_will_task() and skipped
+        # the will-executor verification, so the user always had to press
+        # "Check" manually after finishing the wizard. We now replicate exactly
+        # the lists.py check() logic: after building, query every will that
+        # needs a server check (Will.needs_server_check) and run
+        # check_transactions(), which shows the "Checking transactions" dialog.
+        will = {}
+        for wid, w in self.bal_window.willitems.items():
+            if Will.needs_server_check(w):
+                will[wid] = w
+        if will:
+            self.bal_window.check_transactions(will)
+
         self.close()
         # self.next_widget(BalWizardLocktimeAndFeeWidget(self.bal_window,self,self.on_next_locktimeandfee,self.on_next_wedonwload,self.on_next_wedonwload.on_cancel_heir))
 
@@ -321,10 +336,30 @@ class BalWizardWEDownloadWidget(BalWizardWidget):
                         ping_on_done()
 
                     def ping_on_done():
+                        # Task #02 - "Automatically download and select"
+                        # (index 0): the green SELECTED tick must follow the
+                        # green ping dot, i.e. select ONLY servers that actually
+                        # answered the ping (status == 200) and DESELECT every
+                        # server that did not (timeout / error / never pinged).
+                        #
+                        # Why the explicit deselect matters: previously a server
+                        # that had been selected on an earlier download but is
+                        # now unreachable stayed selected, so the plugin kept
+                        # broadcasting to a dead server and got stuck. Forcing
+                        # selected=False for non-200 servers discards them at the
+                        # source. Re-running this (each "Automatically download"
+                        # action) re-evaluates every server: one that failed
+                        # before but now answers is selected again.
+                        #
+                        # We compare the status as a string ("200") to stay
+                        # consistent with the will-executor list view
+                        # (lists.py uses str(status) == "200"), and use .get()
+                        # so a missing "status" key never raises.
                         if index < 1:
                             for we in self.bal_window.willexecutors:
-                                if self.bal_window.willexecutors[we]["status"] == 200:
-                                    self.bal_window.willexecutors[we]["selected"] = True
+                                wedict = self.bal_window.willexecutors[we]
+                                responded = str(wedict.get("status", "")) == "200"
+                                wedict["selected"] = responded
                         Willexecutors.save(
                             self.bal_window.bal_plugin, self.bal_window.willexecutors
                         )
@@ -502,10 +537,35 @@ class BalBuildWillDialog(BalDialog):
         self.bal_window = bal_window
         self.bal_plugin = bal_window.bal_plugin
         self.message_label = QLabel(_("Building Will:"))
+        # Allow the long report text to wrap instead of forcing the dialog ever
+        # wider, and let it grow downward inside the scroll area below.
+        self.message_label.setWordWrap(True)
+        self.message_label.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft
+        )
         self.vbox = QVBoxLayout(self)
-        self.vbox.addWidget(self.message_label, 0)
+
+        # SCROLLABLE message area (allegato14): with many will-executors the
+        # report can reach dozens of lines. Previously the dialog kept resizing
+        # itself taller for every new line (see msg_update's resize), so with
+        # e.g. 50 will-executors the window grew past the screen and the bottom
+        # buttons (Close) became unreachable. We now put the message label in a
+        # QScrollArea with a capped maximum height: once the text exceeds that
+        # height a vertical scrollbar appears and the buttons stay visible.
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setWidget(self.message_label)
+        # Open the report area already ~500px tall (owner request, allegato1:
+        # the previous ~140px area was far too short). The dialog may still grow
+        # up to 700px to fit a few more lines; beyond that the vertical
+        # scrollbar takes over and the bottom buttons stay reachable.
+        self.scroll_area.setMinimumHeight(500)
+        self.scroll_area.setMaximumHeight(700)
+        self.vbox.addWidget(self.scroll_area, 1)
+
+        # Kept for backward compatibility (referenced by old/commented code);
+        # no longer used to lay out the messages.
         self.qwidget = QWidget(self)
-        self.vbox.addWidget(self.qwidget, 1)
         self.labelsbox = QVBoxLayout(self.qwidget)
         self.setMinimumWidth(600)
         self.setMinimumHeight(100)
@@ -519,6 +579,18 @@ class BalBuildWillDialog(BalDialog):
         # Manual next-steps hint (Sign / Broadcast) shown to the user after the
         # dialog finishes; None when nothing is left to do.
         self._next_steps_hint = None
+        # Set to True by _sync_locktime_to_built_txs when the delivery date was
+        # automatically anticipated during a rebuild. Used to explain to the
+        # user WHY signing is being requested (otherwise the sign prompt appears
+        # without any reason, as the owner reported).
+        self._date_was_anticipated = False
+        # Set to True right after we broadcast an automatic invalidation
+        # transaction (the "postpone" path). On the very next phase-1 re-check
+        # Electrum may not have seen the invalidation tx yet, so it would still
+        # report a postpone and the wizard would re-prompt to invalidate over
+        # and over (the reported loop). When this flag is set and a postpone is
+        # STILL detected, we STOP with a clear message instead of re-prompting.
+        self._invalidation_broadcast = False
         self.network = Network.get_instance()
         self._stopping = False
         self.thread = TaskThread(self)
@@ -592,12 +664,22 @@ class BalBuildWillDialog(BalDialog):
             self.bal_window.check_will()
             self.msg_set_checking(self.msg_ok())
         except WillExpiredException:
+            # UNIFY INVALIDATE PROCEDURE (+ task #03):
+            #
+            # The will is already expired (e.g. the CHECK button is pressed on an
+            # expired will). Previously this returned (None, invalidate_tx),
+            # which routed to the automatic invalidate path (password prompt +
+            # auto-broadcast) that did NOT set the "BAL Invalidate transaction"
+            # history label.
+            #
+            # We now return the SAME "invalidate_classic" signal used elsewhere,
+            # so on_success_phase1 shows the warning popup and auto-opens
+            # Electrum's classic transaction window (which sets the label). This
+            # makes the CHECK button and the WIZARD behave identically and fixes
+            # the missing-label bug (#03).
             _logger.debug("expired")
             self.msg_set_checking("Expired")
-            fee_per_byte = self.bal_window.will_settings.get("baltx_fees", 1)
-            return None, Will.invalidate_will(
-                self.bal_window.willitems, self.bal_window.wallet, fee_per_byte
-            )
+            return "invalidate_classic", None
         except WillPostponedException as e:
             # An already signed/sent will is being postponed.  Like an expired
             # will, the previously committed coins must be invalidated on-chain
@@ -628,12 +710,30 @@ class BalBuildWillDialog(BalDialog):
             elif isinstance(e, TxFeesChangedException):
                 message = _("Txfees are changed")
             elif isinstance(e, HeirNotFoundException):
-                message = _("Heir not found")
+                # Task #01b: the old text "Heir not found" was misleading.
+                # In practice this branch is reached whenever the will is no
+                # longer coherent and must be rebuilt - very often simply
+                # because the delivery date was anticipated, NOT because an heir
+                # is genuinely missing. We therefore show a clear, accurate
+                # message that covers both the DATE and the HEIRS cases.
+                message = _(
+                    "Found CHANGES to the DATE or the HEIRS,\n"
+                    "a NEW WILL must be prepared."
+                )
             if message:
                 _logger.debug(f"message: {message}")
                 self.msg_set_checking(message)
             else:
-                self.msg_set_checking("New")
+                # Task #01b: the old fallback text "New" was unclear. When the
+                # will is incomplete without a more specific reason, it still
+                # means the will has to be rebuilt, so we use the same clear
+                # message as the HeirNotFoundException branch above.
+                self.msg_set_checking(
+                    _(
+                        "Found CHANGES to the DATE or the HEIRS,\n"
+                        "a NEW WILL must be prepared."
+                    )
+                )
 
         if have_to_build:
             self.msg_set_building()
@@ -647,10 +747,7 @@ class BalBuildWillDialog(BalDialog):
                     return False, None
 
                 self.bal_window.check_will()
-                for wid in Will.only_valid(self.bal_window.willitems):
-                    # Label shown in Electrum's History tab for inheritance txs.
-                    self.bal_window.wallet.set_label(wid, "BAL Inheritance transaction")
-                self.msg_set_building(self.msg_ok())
+                self._build_success_report()
             except WillExecutorNotPresent:
                 self.msg_set_status(
                     _("Will-Executor excluded"), None, _("Skipped"), self.COLOR_ERROR
@@ -683,21 +780,77 @@ class BalBuildWillDialog(BalDialog):
                 self.msg_set_building(self.msg_warning(e))
                 return "invalidate_classic", None
 
+            except NotCompleteWillException as e:
+                # IMPORTANT (bugs E/F/K): build_will() above has just REBUILT the
+                # whole will because the heirs (or the date) changed. The
+                # post-build re-validation (check_will) then legitimately reports
+                # that the new will differs from the previous one - e.g. it
+                # raises HeirNotFoundException for a heir that is not yet covered
+                # by an already-signed transaction. That is NOT an error: it is
+                # exactly the signal that the freshly built transactions still
+                # need to be SIGNED (and then broadcast).
+                #
+                # Previously this fell through to the generic "except Exception"
+                # below, which (1) printed the heir name in RED and (2) returned
+                # have_to_sign=False, so the rebuilt will was never signed
+                # ("Nothing to do"). We now treat it as a successful rebuild:
+                # show the green "Ok" + the heir list and FALL THROUGH to the
+                # have_to_sign detection, so the new (status "New", not COMPLETE)
+                # transactions are correctly detected and signed/broadcast.
+                _logger.debug(f"will rebuilt, needs signing: {e}")
+                self._build_success_report()
+
+            except HeirAmountIsDustException:
+                # ALL-DUST CASE (owner request): every heir's share is below the
+                # Bitcoin dust limit, so the inheritance would pay nobody. We do
+                # NOT build, sign or check anything - we show a clear message in
+                # red and stop, so no "empty" will ends up in the list. This is
+                # raised by Heirs.prepare_lists only when ALL real heirs are
+                # dust; a mix of dust + valid heirs never reaches here.
+                self.msg_set_building(
+                    self.msg_error(
+                        _(
+                            "All heirs' shares are below the dust limit: "
+                            "the inheritance cannot be created. "
+                            "Increase the amounts or reduce the number of heirs."
+                        )
+                    )
+                )
+                return False, None
+
             except Exception as e:
                 self.msg_set_building(self.msg_error(e))
                 return False, None
 
-        # excluded_heirs = []
+        # DUST report (one line PER HEIR, not per will-executor).
+        #
+        # WHY: the wallet balance can be so small that each heir's share falls
+        # below Bitcoin's dust limit, so the inheritance is not feasible. The
+        # "is DUST" condition depends ONLY on the heir's amount, NOT on which
+        # will-executor transaction we are looking at. The previous code looped
+        # over every valid will (one per will-executor) AND every heir, so with
+        # e.g. 20 will-executors and 10 heirs it printed 20x10 = 200 identical
+        # "is DUST ... Excluded from will <wid>" rows (owner report, allegato13).
+        #
+        # We now collect the dust heirs in a de-duplicated dict (heir id ->
+        # dust amount) across all valid wills and print ONE row per heir,
+        # without the will-executor reference. So N heirs => at most N rows,
+        # regardless of how many will-executors exist.
+        dust_heirs = {}
         for wid in Will.only_valid(self.bal_window.willitems):
             heirs = self.bal_window.willitems[wid].heirs
             for hid, heir in heirs.items():
                 if "DUST" in str(heir[HEIR_REAL_AMOUNT]):
-                    self.msg_set_status(
-                        f"{hid},{heir[HEIR_DUST_AMOUNT]} is DUST",
-                        None,
-                        f"Excluded from will {wid}",
-                        self.COLOR_WARNING,
-                    )
+                    # Keep the first dust amount seen for this heir; it is the
+                    # same share in every will-executor copy of the will.
+                    dust_heirs.setdefault(hid, heir[HEIR_DUST_AMOUNT])
+        for hid, dust_amount in dust_heirs.items():
+            self.msg_set_status(
+                f"{_('Heir')} {hid}",
+                None,
+                f"{dust_amount} is DUST - excluded (amount below dust limit)",
+                self.COLOR_WARNING,
+            )
 
         have_to_sign = False
         for wid in Will.only_valid(self.bal_window.willitems):
@@ -705,6 +858,116 @@ class BalBuildWillDialog(BalDialog):
                 have_to_sign = True
                 break
         return have_to_sign, txs
+
+    def _build_success_report(self):
+        """Mark the build step as done and list every heir in green.
+
+        Called after a successful (re)build of the will. It:
+          1. labels each inheritance transaction in Electrum's history;
+          2. shows the green "Ok" result on the "Building your will" row;
+          3. lists EVERY heir of the freshly built will, one per line, in green
+             (the "Ok" colour), so the user can confirm at a glance who will
+             inherit.
+
+        Previously a heir name could appear in RED (it was the text of a rebuild
+        exception) and the heir list was only shown on the "all clean" path,
+        which is why after changing/deleting an heir the user saw a single red
+        heir name and no green list. This helper is now used both on the clean
+        path and on the "will was rebuilt and needs signing" path, so the green
+        heir list is always shown.
+
+        Internal will-executor pseudo-heirs (reserved ``w!ll3x3c"`` prefix) are
+        skipped, exactly as the core coherence check does. A set keeps the list
+        unique even when an heir appears in several transactions.
+        """
+        for wid in Will.only_valid(self.bal_window.willitems):
+            # Label shown in Electrum's History tab for inheritance txs.
+            self.bal_window.wallet.set_label(wid, "BAL Inheritance transaction")
+        # Keep the plugin's stored delivery date in sync with the (possibly
+        # auto-anticipated) transactions, otherwise the next Check would wrongly
+        # ask to invalidate. See _sync_locktime_to_built_txs for the full why.
+        self._sync_locktime_to_built_txs()
+        self.msg_set_building(self.msg_ok())
+        # List EACH heir on its OWN line, green + bold (owner request: revert the
+        # one-line "Heirs: a, b, c" form of v0.4.6). Heir names can be long, and
+        # now that the report area scrolls (allegato1) there is no need to cram
+        # them onto a single line. We de-duplicate (an heir can appear in several
+        # will-executor transactions) and skip the internal will-executor
+        # pseudo-heirs (reserved ``w!ll3x3c"`` prefix), exactly as before.
+        shown_heirs = set()
+        for wid in Will.only_valid(self.bal_window.willitems):
+            for hname in self.bal_window.willitems[wid].heirs:
+                if str(hname)[:9] == 'w!ll3x3c"':
+                    continue
+                if hname in shown_heirs:
+                    continue
+                shown_heirs.add(hname)
+                self.msg_set_status(_("Heir"), None, str(hname), self.COLOR_OK)
+
+    def _sync_locktime_to_built_txs(self):
+        """Align the plugin's stored delivery date with the built transactions.
+
+        WHY this is needed (bug reported by the owner):
+        When the will is rebuilt while it still spends the same coins as a
+        previous one (e.g. after deleting an heir WITHOUT changing the date),
+        the core engine AUTOMATICALLY anticipates the transaction locktime by
+        one day (see Will.check_anticipate / Util.anticipate_locktime). This is
+        correct and required so the new transaction can be mined BEFORE the old
+        one it replaces.
+
+        However the plugin's own stored delivery date
+        (WILL_SETTINGS["locktime"]) was NOT updated and stayed at the original
+        date. On the next Check the plugin compared the stored date (original)
+        with the transaction locktime (original minus one day) and, since
+        stored > tx, mistook the automatic anticipation for a user POSTPONE,
+        wrongly asking to invalidate the will.
+
+        Fix: after a (re)build, set the stored delivery date to the MINIMUM
+        locktime among the valid built transactions. We only ever move the date
+        EARLIER (anticipation): if the minimum is not strictly below the current
+        stored date we leave it untouched, so a genuine user-chosen postpone is
+        never silently overwritten. The owner confirmed that, when several
+        transactions carry different locktimes, taking the minimum is the
+        desired behaviour, and that the date shown in the panel/wizard must
+        reflect this anticipated date (so the calendar .ics also uses it).
+
+        We route the update through BalWindow.update_setting_widgets, which is
+        the single place that (1) stores the value in WILL_SETTINGS, (2)
+        persists it to Electrum's database and (3) refreshes the date widgets in
+        every panel/wizard, so the visible date and the .ics export stay
+        consistent.
+        """
+        # Minimum locktime across the valid (just built) inheritance txs.
+        # Will.get_min_locktime returns None when there is no valid tx.
+        min_locktime = Will.get_min_locktime(self.bal_window.willitems, None)
+        if min_locktime is None:
+            return
+        min_locktime = int(min_locktime)
+        # Current stored delivery date, as a comparable UNIX timestamp.
+        try:
+            current = int(
+                Util.parse_locktime_string(
+                    self.bal_window.will_settings["locktime"]
+                )
+            )
+        except Exception:
+            # If the stored value cannot be parsed, fall back to syncing.
+            current = None
+        # Only anticipate (move the date EARLIER); never overwrite a postpone.
+        if current is not None and min_locktime >= current:
+            return
+        _logger.debug(
+            f"sync delivery date to anticipated tx locktime: "
+            f"{current} -> {min_locktime}"
+        )
+        # Remember that we anticipated the date, so the later sign prompt can
+        # explain WHY signing is needed (see on_success_phase1).
+        self._date_was_anticipated = True
+        # update_setting_widgets stores the value, persists it and refreshes the
+        # date widgets in all panels/wizard (so the .ics calendar uses it too).
+        self.bal_window.update_setting_widgets(
+            min_locktime, "locktime", update_all=True
+        )
 
     def on_accept(self):
         self.bal_window.update_all()
@@ -733,12 +996,34 @@ class BalBuildWillDialog(BalDialog):
         try:
             tx.add_info_from_wallet(self.bal_window.wallet)
             self.network.run_from_another_thread(tx.add_info_from_network(self.network))
-            txid = self.network.run_from_another_thread(
+
+            # IMPORTANT (task #21 fix): get the txid from the transaction
+            # object, NOT from broadcast_transaction()'s return value.
+            # Network.broadcast_transaction is declared "-> None" and ALWAYS
+            # returns None (it only raises on failure). The previous code stored
+            # that None into `txid` and put set_label() in the `else: # txid`
+            # branch, which was therefore NEVER reached - that is why the
+            # "BAL Invalidate transaction" history label kept missing on this
+            # automatic ("postpone") path. The transaction is already signed and
+            # complete here, so tx.txid() is the correct, stable id - exactly
+            # what the working Tools -> Invalidate path uses
+            # (BalWalletWindow.invalidate_will -> result.txid()).
+            txid = tx.txid()
+
+            # Set the history label BEFORE broadcasting. set_label only writes to
+            # the local wallet metadata (no network needed), so doing it first
+            # guarantees the label exists the moment the transaction shows up in
+            # the History tab, regardless of how fast the broadcast/notification
+            # arrives.
+            if txid:
+                self.bal_window.wallet.set_label(txid, "BAL Invalidate transaction")
+            else:
+                _logger.debug(f"invalidate tx has no txid: {tx}")
+
+            self.network.run_from_another_thread(
                 self.network.broadcast_transaction(tx, timeout=120), timeout=120
             )
             self.msg_set_invalidating(self.msg_ok())
-            if not txid:
-                _logger.debug(f"should not be none txid: {txid}")
 
         except TxBroadcastError as e:
             _logger.error(f"fail to broadcast transaction:{e}")
@@ -909,7 +1194,19 @@ class BalBuildWillDialog(BalDialog):
             if tx:
                 if tx.is_complete():
                     self.loop_broadcast_invalidating(tx)
-                    self.wait(5)
+                    # Wait 10 seconds (was 5) AFTER broadcasting the
+                    # invalidation so Electrum's wallet/network has time to see
+                    # the new transaction before we re-run phase 1. Without this
+                    # pause the immediate re-check still detected the old
+                    # (not-yet-invalidated) will and re-prompted to invalidate,
+                    # producing the reported loop. This runs in the worker
+                    # thread, so the GUI is not frozen by the sleep.
+                    self.wait(10)
+                    # Remember that we just broadcast an invalidation. If the
+                    # next phase-1 re-check STILL reports a postpone (because
+                    # Electrum has not registered the tx yet), we stop with a
+                    # clear message instead of looping (see on_success_phase1).
+                    self._invalidation_broadcast = True
                 else:
                     raise Exception("tx not complete")
             else:
@@ -946,46 +1243,74 @@ class BalBuildWillDialog(BalDialog):
         # is safe. We then stop and close the wizard.
         if self.have_to_sign == "invalidate_classic":
             self.thread.stop()
-            # Design decision (window stacking + user clarity):
+            # UNIFY INVALIDATE PROCEDURE (+ task #03):
             #
             # When an heir is added to an already-expired will, the rebuilt will
             # is itself expired and the old will must be invalidated on-chain
-            # before the new one can be used. We previously tried to open the
-            # invalidation transaction window AUTOMATICALLY from here, but doing
-            # so from within the closing wizard proved fragile: depending on the
-            # OS window manager and Qt's event ordering, the transaction window
-            # kept ending up BEHIND the main wallet window (it lost focus when
-            # the wizard closed). Neither closing-before-opening nor a deferred
-            # QTimer close() fixed it reliably on every machine.
+            # before the new one can be used.
             #
-            # The robust solution is to NOT auto-open any window here. Instead we
-            # close the wizard and show a clear instruction telling the user to
-            # run "Tools -> Invalidate" themselves. That menu path is already
-            # known to work perfectly (its transaction window always stays in
-            # front, because no other window is closing at the same time), and
-            # it also makes the user consciously aware that they are performing a
-            # deliberate, important action (invalidating their old will).
+            # We make the CHECK button and the WIZARD behave IDENTICALLY:
+            #   1. show a WARNING popup (no "Tools -> Invalidate" wording);
+            #   2. AUTOMATICALLY open Electrum's classic transaction dialog via
+            #      BalWalletWindow.invalidate_will() (the same code used by the
+            #      Tools -> Invalidate menu). That path already sets the
+            #      "BAL Invalidate transaction" history label - which fixes
+            #      task #03 (the label was previously missing on the automatic
+            #      path).
             #
-            # Close the wizard first so the instruction popup is the only window
-            # left, then show the guidance message.
+            # Window-stacking note (history): opening the transaction window
+            # straight from within the closing wizard used to leave it BEHIND
+            # the main window on some window managers. The robust fix is to
+            # close the wizard FIRST and defer the call with QTimer.singleShot
+            # so it runs on the next event-loop iteration, when the wizard is
+            # already gone and the transaction window becomes the front-most,
+            # focused window.
             self.close()
             self.bal_window.show_message(
                 _(
                     "Your will has expired and must be invalidated before it "
-                    "can be rebuilt.\n\n"
-                    "Please use the top-right menu Tools -> Invalidate to "
-                    "invalidate your old will: a transaction window will open "
-                    "where you can sign and broadcast the invalidation.\n\n"
+                    "can be rebuilt.\n"
+                    "A transaction window will now open:\n"
+                    "please SIGN and then BROADCAST it to invalidate your old "
+                    "will.\n"
                     "After the invalidation is confirmed, press the Check "
-                    "button near Tools, to finish the will."
+                    "button to finish the will."
                 )
             )
+            # Deferred so the wizard is fully closed before the classic
+            # invalidate window opens (keeps it in front, fixes the old
+            # "window behind" problem).
+            QTimer.singleShot(0, self.bal_window.invalidate_will)
             return
 
         _logger.debug("have to sign {}".format(self.have_to_sign))
         password = None
         if self.have_to_sign is None:
             _logger.debug("have to invalidate")
+
+            # LOOP GUARD (task #21): if we already broadcast an invalidation on
+            # the previous pass and phase 1 STILL reports a postpone, Electrum
+            # has simply not seen the invalidation transaction yet. Re-prompting
+            # to invalidate here is exactly what produced the reported endless
+            # loop ("Invalidate your old will" reappearing right after signing).
+            # Instead of re-prompting, STOP cleanly with a clear message and
+            # tell the user to retry the Check once the invalidation confirms.
+            if self._invalidation_broadcast:
+                self.thread.stop()
+                self.msg_set_invalidating(self.msg_ok())
+                self.bal_window.show_message(
+                    _(
+                        "Your old will has been invalidated and the "
+                        "transaction was broadcast.\n"
+                        "Electrum may need a little time to register it.\n"
+                        "Please wait until the invalidation transaction is "
+                        "confirmed, then press the Check button again to "
+                        "finish updating your will."
+                    )
+                )
+                self._add_close_button()
+                return
+
             self.msg_set_invalidating()
             # need to sign invalidate and restart phase 1
 
@@ -1017,6 +1342,26 @@ class BalBuildWillDialog(BalDialog):
             return
 
         elif self.have_to_sign:
+            # If the will was rebuilt with an automatically anticipated delivery
+            # date, explain WHY we are now asking to sign: otherwise the sign
+            # prompt appears with no reason (owner feedback). The note is shown
+            # on the "Building your will" row (orange warning) before the modal
+            # password prompt opens, so the user can read it.
+            if self._date_was_anticipated:
+                # Render this notice in BLACK BOLD (not the yellow warning
+                # colour) and split it onto TWO lines after "...previous one."
+                # for readability (allegato17). The "\n" is converted to a line
+                # break by msg_update (it replaces "\n" with "<br>").
+                self.msg_set_building(
+                    "<b>{}</b>".format(
+                        _(
+                            "The delivery date was automatically moved one day "
+                            "earlier so the updated will can correctly replace "
+                            "the previous one.\n"
+                            "Please sign (and broadcast) to confirm the change."
+                        )
+                    )
+                )
             password = self.bal_window.get_wallet_password(
                 _("Sign your will"), parent=self
             )
@@ -1307,8 +1652,18 @@ class BalBuildWillDialog(BalDialog):
         full_text = "<br><br>".join(self.labels).replace("\n", "<br>")
         self.message_label.setText(full_text)
         self.message_label.adjustSize()
-        # self.setMinimumHeight(len(self.labels)*40)
+        # Auto-scroll the report to the BOTTOM so the newest line is always
+        # visible (allegato14). The QScrollArea caps the height, so instead of
+        # resizing the whole dialog taller we move its vertical scrollbar to the
+        # maximum. ensureWidgetVisible is deferred via the scrollbar range so it
+        # reflects the just-added text.
+        scrollbar = self.scroll_area.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+        # Let the dialog grow only up to the scroll area's capped height; beyond
+        # that the scrollbar handles overflow and the buttons stay reachable.
         self.resize(self.sizeHint())
+        # Re-assert the bottom position after the resize/relayout settled.
+        scrollbar.setValue(scrollbar.maximum())
 
     def get_text(self):
         return self.message_label.text()

@@ -466,7 +466,17 @@ class BalWindow:
             self.willexecutors = Willexecutors.get_willexecutors(
                 self.bal_plugin, update=True, bal_window=self, task=False
             )
-            if self.date_to_check < datetime.now().timestamp():
+            # SIMPLE / ADVANCED: in BASIC mode the "Check Alive" parameter must
+            # behave AS IF IT DID NOT EXIST. The check-alive threshold drives
+            # the "you are alive -> postpone the inheritance" prompt; raising
+            # CheckAliveError here is what triggers that postpone/invalidate
+            # flow. In BASIC we therefore SKIP this check entirely, so a passed
+            # check-alive date never forces a postpone/rewrite of the will. The
+            # delivery time (locktime) is unaffected and still fully enforced.
+            if (
+                not self.bal_plugin.is_basic_mode()
+                and self.date_to_check < datetime.now().timestamp()
+            ):
                 raise CheckAliveError(self.date_to_check)
 
             self.init_heirs_to_locktime(self.bal_plugin.ENABLE_MULTIVERSE.get())
@@ -591,7 +601,15 @@ class BalWindow:
                 elif isinstance(e, TxFeesChangedException):
                     message = "Txfees are changed"
                 elif isinstance(e, HeirNotFoundException):
-                    message = "Heir not found"
+                    # Task #01b: replace the misleading "Heir not found" text.
+                    # This branch is most often hit because the delivery date
+                    # was anticipated, not because an heir is missing, so we use
+                    # a clear message that covers both the DATE and the HEIRS
+                    # cases (kept consistent with dialogs.py / the CHECK window).
+                    message = (
+                        "Found CHANGES to the DATE or the HEIRS,\n"
+                        "a NEW WILL must be prepared."
+                    )
 
                 if message:
                     self.show_message(
@@ -1141,11 +1159,12 @@ class BalWindow:
 
         base_msg = _("Downloading will-executors list...")
         download_start = time.time()
-        # Upper bound shown to the user.  fetch_will_executors_list tries up to
-        # two endpoints, each with timeout=10 and one retry (~21s worst case),
-        # so ~45s is a realistic maximum.  Showing "Xs / 45s" tells the user how
-        # long they may have to wait instead of an open-ended counter.
-        download_deadline = 45
+        # Upper bound shown to the user.  Unified with every other network wait
+        # via the single shared Willexecutors.NETWORK_DEADLINE constant (the
+        # user asked for one consistent 20s value everywhere instead of the old
+        # scattered 30s/45s numbers).  Showing "Xs / NETWORK_DEADLINEs" tells the
+        # user how long they may have to wait instead of an open-ended counter.
+        download_deadline = Willexecutors.NETWORK_DEADLINE
 
         def task():
             # Heartbeat: show an elapsed-seconds counter (with the max wait made
@@ -1316,6 +1335,16 @@ class BalWindow:
                         _settings_widget.apply_editable_dates()
                     except Exception as _edit_err:
                         _logger.debug(f"apply_editable_dates error: {_edit_err}")
+                    # Re-apply BASIC/ADVANCED visibility of the Check-Alive
+                    # field on the existing WILL/HEIR toolbars, so switching
+                    # USER TYPE shows/hides it immediately (bug fix: it used to
+                    # reappear only in the wizard, not on these tabs).
+                    try:
+                        _settings_widget.apply_user_type_visibility()
+                    except Exception as _vis_err:
+                        _logger.debug(
+                            f"apply_user_type_visibility error: {_vis_err}"
+                        )
         except Exception as e:
             _logger.error(f"error while updating window: {e}")
 

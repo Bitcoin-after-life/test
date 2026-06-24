@@ -30,6 +30,14 @@ from .plugin_base import BalPlugin
 # block the UI.
 DEFAULT_TIMEOUT = 5
 
+# Single, shared wall-clock deadline (seconds) for ALL network waits the user
+# can watch in the GUI: the parallel broadcast (pushtxs), the parallel check
+# (searchtx), the will-executor ping and the will-executor list download.
+# Having ONE constant (instead of several scattered 30s/45s values) keeps the
+# experience consistent and makes it trivial to tune. Requested by the user
+# (reduced from 30s/45s to 20s, unified into one variable).
+NETWORK_DEADLINE = 20
+
 # Broadcast (pushtxs) timeouts.  Broadcasting a will is important, so we keep a
 # couple of quick retries to survive a transient hiccup -- but far from the old
 # 10s x 10 retries + 30s sleeps (~140s) that froze the wizard on a dead server.
@@ -43,7 +51,8 @@ PUSH_RETRY_SLEEP = 1
 # Global wall-clock deadline (seconds) for the whole parallel broadcast.  Once
 # it elapses we stop waiting for the still-pending servers, mark them as
 # "Timeout" and let the wizard proceed instead of appearing stuck.
-PUSH_GLOBAL_DEADLINE = 30
+# Derived from the single shared NETWORK_DEADLINE constant above.
+PUSH_GLOBAL_DEADLINE = NETWORK_DEADLINE
 
 # Check (searchtx) timeouts.  Used when the user presses "Check" to verify that
 # each will-executor still holds the transaction.  Like the broadcast path, the
@@ -53,7 +62,8 @@ PUSH_GLOBAL_DEADLINE = 30
 CHECK_TIMEOUT = 8
 CHECK_MAX_RETRIES = 1
 CHECK_RETRY_SLEEP = 1
-CHECK_GLOBAL_DEADLINE = 30
+# Derived from the single shared NETWORK_DEADLINE constant above.
+CHECK_GLOBAL_DEADLINE = NETWORK_DEADLINE
 
 _logger = get_logger(__name__)
 
@@ -68,6 +78,7 @@ class Willexecutors:
     # importing module-level names.  Single source of truth: the module
     # constants defined above.
     DEFAULT_TIMEOUT = DEFAULT_TIMEOUT
+    NETWORK_DEADLINE = NETWORK_DEADLINE
     PUSH_TIMEOUT = PUSH_TIMEOUT
     PUSH_MAX_RETRIES = PUSH_MAX_RETRIES
     PUSH_RETRY_SLEEP = PUSH_RETRY_SLEEP

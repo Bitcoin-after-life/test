@@ -417,6 +417,32 @@ class Plugin(BalPlugin):
         # be saved on a USB stick and a copy given to the heirs).
         heir_no_willexecutor = BalCheckBox(self.NO_WILLEXECUTOR)
 
+        # USER TYPE selector (SIMPLE / ADVANCED, global). A two-choice combo
+        # (not a free-text field) bound to the USER_TYPE config:
+        #   index 0 -> "BASIC"    -> stored value "basic"    (DEFAULT)
+        #   index 1 -> "ADVANCED" -> stored value "advanced"
+        #
+        # BASIC hides the advanced controls (Raw/Date selector and the
+        # "Check Alive" field) and disables the check-alive postpone behaviour.
+        # Changing it refreshes the open windows so the controls appear/disappear
+        # immediately. It is kept in a named variable so the "Reset" button can
+        # restore its displayed value after a reset.
+        user_type_combo = QComboBox()
+        user_type_combo.addItems([_("BASIC"), _("ADVANCED")])
+        # Map the stored string to the combo index (anything but "advanced"
+        # falls back to BASIC, matching BalPlugin.is_basic_mode()).
+        user_type_combo.setCurrentIndex(
+            0 if str(self.USER_TYPE.get()).lower() != "advanced" else 1
+        )
+
+        def on_user_type_change(idx):
+            # Persist "basic"/"advanced" and refresh the open windows so the
+            # advanced controls appear/disappear right away.
+            self.USER_TYPE.set("advanced" if idx == 1 else "basic")
+            self.update_all()
+
+        user_type_combo.currentIndexChanged.connect(on_user_type_change)
+
         # Editable line/text widgets are created once and kept in named
         # variables so the "Reset" button (Group C / C4b) can refresh the
         # displayed values after resetting the underlying config.
@@ -449,6 +475,21 @@ class Plugin(BalPlugin):
         grid = QGridLayout()
         add_widget(
             grid,
+            "User Type",
+            user_type_combo,
+            0,
+            (
+                "Choose how much detail the plugin shows.\n\n"
+                "BASIC (default): a simpler interface. It hides the advanced "
+                "controls (the Raw/Date selector and the 'Check Alive' field) "
+                "and turns off the 'check alive' postpone behaviour, so you "
+                "only set the delivery date.\n\n"
+                "ADVANCED: shows every control, including the 'Check Alive' "
+                "field and the Raw/Date selector."
+            ),
+        )
+        add_widget(
+            grid,
             "Hide Replaced",
             heir_hide_replaced,
             1,  
@@ -475,7 +516,7 @@ class Plugin(BalPlugin):
         )
         add_widget(
             grid,
-            "Editable dates",
+            "Panel editable Date and Fee",
             heir_editable_dates,
             4,
             (
@@ -485,14 +526,38 @@ class Plugin(BalPlugin):
                 "When disabled, those dates are display-only outside the wizard."
             ),
         )
+        # "Add transaction without will-executor" setting (formerly labelled
+        # "No will-executor TX"). When ON the plugin ALSO builds the backup
+        # inheritance transaction that does NOT require a will-executor (the
+        # "celeste"/light-blue one shown in the will list): it can be saved on a
+        # USB stick and a copy handed to the heirs. When OFF only the
+        # transactions destined to the selected will-executors are built.
+        #
+        # Placed here (row 5, right below "Panel editable Date and Fee" and above
+        # "Number of reminders") at the user's request so related options sit
+        # together. The remaining grid rows below were renumbered accordingly.
+        add_widget(
+            grid,
+            "Add transaction without willexecutor",
+            heir_no_willexecutor,
+            5,
+            (
+                "Create a will that does not require a Will-executor; it can be "
+                "saved, for example, on a USB stick, and a copy can be given to "
+                "the heirs."
+            ),
+        )
         add_widget(
             grid,
             "Number of reminders",
             heir_num_reminders,
-            5,
+            6,
             (
                 "How many reminder alarms the exported calendar (.ics) event "
-                "contains.\n"
+                "contains.\n\n"
+                "BASIC MODE:\n"
+                "Calendar reminder 30, 10 and 1 days before.\n\n\n"
+                "ADVANCED MODE:\n"
                 "The reminders are spread across the check-alive period and "
                 "always fall before the delivery deadline.\n"
                 "If the period is shorter than the requested number, at most "
@@ -503,7 +568,7 @@ class Plugin(BalPlugin):
             grid,
             "Event summary",
             edit_event_summary,
-            6,
+            7,
             (
                 "Default message to be used in event summary\n"
                  "Variables:\n"
@@ -516,7 +581,7 @@ class Plugin(BalPlugin):
             grid,
             "Event description",
             edit_event_description,
-            7,
+            8,
             (
                 "Default message to be used in event description\n"
                  "Variables:\n"
@@ -526,21 +591,6 @@ class Plugin(BalPlugin):
              )
         )
         #add_widget(grid, "Bal Mode", bal_mode, 4, "choose bal mode")
-
-        # "No will-executor TX" setting. Mirrors the checkbox shown in the
-        # wizard's will-executor download window (both bound to NO_WILLEXECUTOR),
-        # so it can also be toggled from the plugin settings. Default ON.
-        add_widget(
-            grid,
-            "No will-executor TX",
-            heir_no_willexecutor,
-            8,
-            (
-                "Create a will that does not require a Will-executor; it can be "
-                "saved, for example, on a USB stick, and a copy can be given to "
-                "the heirs."
-            ),
-        )
 
         # add_widget(
         #    grid,
@@ -584,6 +634,7 @@ class Plugin(BalPlugin):
             # Map each config object to the widget that displays it, so we can
             # both reset the stored value and update what the user sees.
             resets = [
+                (self.USER_TYPE, user_type_combo, "user_type"),
                 (self.HIDE_REPLACED, heir_hide_replaced, "check"),
                 (self.HIDE_INVALIDATED, heir_hide_invalidated, "check"),
                 (self.AUTO_SIGN, heir_auto_sign, "check"),
@@ -607,6 +658,11 @@ class Plugin(BalPlugin):
                     widget.setText(cfg.default)
                 elif kind == "text":
                     widget.setPlainText(cfg.default)
+                elif kind == "user_type":
+                    # Default is "basic" -> combo index 0; "advanced" -> index 1.
+                    widget.setCurrentIndex(
+                        1 if str(cfg.default).lower() == "advanced" else 0
+                    )
             # Refresh the open BAL windows so any dependent view (e.g. the
             # editable-dates state is not in this list, but hide filters are)
             # reflects the reset values.
@@ -638,6 +694,9 @@ class Plugin(BalPlugin):
         # Outer layout: warning (top) -> settings grid -> bottom button row.
         outer = QVBoxLayout(d)
         outer.addWidget(lbl_warning)
+        # Blank vertical gap below the red warning so it is not glued to the
+        # first setting row ("User Type"); requested by the user for readability.
+        outer.addSpacing(12)
         outer.addLayout(grid)
         outer.addLayout(bottom_row)
 

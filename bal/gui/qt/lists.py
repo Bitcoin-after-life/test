@@ -491,8 +491,10 @@ class PreviewList(MyTreeView, MessageBoxMixin):
                 self.bal_window.bal_plugin.read_file("icons/reload.png")
             )
         )
-        # Tooltip so the icon is self-explanatory when hovered.
-        refresh.setToolTip(_("Check"))
+        # Tooltip so the icon is self-explanatory when hovered. "Check
+        # Inheritance" makes it clear the button re-checks the inheritance/will
+        # state (not a generic refresh).
+        refresh.setToolTip(_("Check Inheritance"))
         refresh.clicked.connect(self.check)
 
         widget = QWidget(self)
