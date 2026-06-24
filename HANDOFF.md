@@ -1,221 +1,232 @@
-# HANDOFF — BAL Electrum Plugin (Bitcoin After Life)
+# HANDOFF — BAL (Bitcoin After Life) Electrum plugin
 
-> **Purpose of this file:** allow ANY new chat / AI model to resume this project
-> WITHOUT losing context. If you are a new assistant, READ THIS FILE FIRST,
-> then read `CHANGELOG.md` and `.agent_memory_tasks.md`.
->
-> **Chat language is Italian, but ALL output (code, comments, UI text, docs,
-> CHANGELOG, commit messages) MUST be in ENGLISH.** The user is NOT a programmer.
+> Purpose: let ANY future AI assistant (Claude or another model, more advanced
+> or cheaper) resume work on this project with full context, without having to
+> re-discover the codebase. Read this file FIRST, then `CHANGELOG.md` and
+> `.agent_memory_tasks.md`.
 
 ---
 
-## 1. MANDATORY STANDING RULES (apply to EVERY task, never skip)
+## 0. TL;DR — what this project is
 
-- **R1 — LANGUAGE:** Italian is ONLY for chatting. ALL deliverables in ENGLISH
-  (code, docstrings, comments, UI strings, docs, CHANGELOG, commit messages).
-- **R2 — DOCUMENTED CODE:** every method/class needs a docstring + explanatory
-  comments. When a non-obvious design choice is made, explain WHY in a comment.
-- **R3 — NEVER INVENT:** if anything is missing or unclear, STOP and ask the user
-  clear, simple questions (he is not a programmer). Be "100% sure" before acting.
-- **R4 — HUMAN CHECKPOINT:** before writing/modifying code, show the PLAN and WAIT
-  for the user's explicit "OK".
-- **METHOD per task:** DISCOVER → PLAN (wait OK) → EXECUTE → VERIFY → ITERATE
-  (max 8 attempts, then declare "UNRESOLVED").
-- **LOG:** a single `CHANGELOG.md` in English, one numbered entry per task.
-- **ZIP-FIRST:** always deliver a test ZIP for the user to try BEFORE committing
-  plugin code. Commit ONLY after explicit user confirmation.
-- Always run `ruff` + the official test suite before committing/reporting/zipping.
+- **Product:** BAL ("Bitcoin After Life") — an inheritance plugin for the
+  **Electrum 4.7.2** Bitcoin wallet (Qt / **PyQt6**).
+- **Form:** external **ZIP plugin** (not bundled in Electrum). The user
+  installs the ZIP from Electrum's plugin manager.
+- **What it does:** lets a wallet owner pre-build, sign and (later) broadcast
+  Bitcoin transactions that pay one or more **heirs** after a chosen **date**
+  (a future UNIX-timestamp `nLockTime`). Optional **will-executors** (remote
+  services) can be paid a fee to broadcast the inheritance when due. The owner
+  periodically proves they are alive ("check-alive"); if the deadline passes,
+  the inheritance becomes spendable.
+- **Current version:** see `bal/VERSION` (last shipped: **0.4.7**).
 
 ---
 
-## 2. PROJECT OVERVIEW
+## 1. MANDATORY working rules (the owner set these — always follow them)
 
-- Electrum **4.7.2** Qt (PyQt6) inheritance plugin.
-- External zip plugin id: `electrum_external_plugins.bal`.
-- **zipimport caches the plugin → the user MUST fully restart Electrum after
-  installing a new ZIP** (always remind him).
-- Repo: `Bitcoin-after-life/test` (GitHub). Working branch: `genspark_ai_developer`.
-- Main code lives under `bal/`. Tests under `tests/`. Electrum source vendored in
-  `electrum-src/` (read-only reference).
+These are non-negotiable. They come from the owner directly.
 
-### Version files (keep ALL FOUR in sync on every release)
-- `bal/manifest.json`  → `"version"`
-- `bal/__init__.py`    → `__version__`
-- `bal/core/plugin_base.py` → `__version__ = "..."  # AUTOMATICALLY GENERATED DO NOT EDIT`
-- `bal/VERSION`
-- **Current released version: 0.3.9**
+- **R1 — LANGUAGE.** The CHAT language with the owner is **Italian**. But ALL
+  *output* — source code, comments, docstrings, UI strings, docs, `CHANGELOG.md`,
+  commit messages, this handoff — must be in **ENGLISH**.
+- **R2 — DOCUMENTED CODE.** Every method/class gets a docstring + explanatory
+  comments. Always explain *WHY* for any non-obvious decision.
+- **R3 — NEVER INVENT.** If something is missing or unclear, STOP and ask the
+  owner clear, simple questions. **The owner is NOT a programmer** — explain in
+  plain language, avoid jargon. Be "100% sure" before acting.
+- **R4 — HUMAN CHECKPOINT.** Before writing/modifying code, present the PLAN
+  and WAIT for an explicit "OK" from the owner.
+- **METHOD:** DISCOVER → PLAN (wait for OK) → EXECUTE → VERIFY → ITERATE
+  (max ~8 attempts per problem, then step back and ask).
+- **LOG:** keep a single `CHANGELOG.md`, in English, **one numbered entry per
+  task** (newest entry appended at the END of the file).
+- **ZIP-FIRST.** Deliver a test ZIP and let the owner test it BEFORE committing.
+  **Commit ONLY after the owner explicitly confirms the ZIP works.**
+- **ALWAYS** run `ruff` + the official test suite before committing / reporting
+  / zipping.
+- **CREDIT-SAVING (important).** The owner is low on funds. Minimize token /
+  credit usage: report brief summaries (do NOT paste whole modified code
+  blocks back), and batch work into a single ZIP/test cycle where possible.
 
 ---
 
-## 3. BUILD / TEST / RELEASE COMMANDS
+## 2. Repository layout (what lives where)
 
-### Build the ZIP (clear caches first)
-```bash
-cd /home/user/webapp
-find bal -name "__pycache__" -type d -exec rm -rf {} + ; find bal -name "*.pyc" -delete
-python3 build_zip.py bal-electrum-plugin-vX.Y.Z.zip   # builds 37 files
+```
+bal/                         <- the plugin package (this is what ships in the ZIP)
+  __init__.py                <- __version__ (one of 4 version files)
+  VERSION                    <- plain-text version (one of 4 version files)
+  manifest.json              <- plugin manifest, "version" field (one of 4)
+  core/
+    plugin_base.py           <- __version__ "AUTOMATICALLY GENERATED" (one of 4)
+    heirs.py                 <- HEIRS + transaction building (prepare_lists,
+                                prepare_transactions, buildTransactions). CORE LOGIC.
+    will.py                  <- Will/WillItem, validation (check_amounts, check_will),
+                                exceptions (AmountException, WillExpiredException, ...).
+    willexecutors.py         <- remote will-executor services handling.
+    util.py                  <- locktime parsing/most helpers (timestamps only).
+  gui/qt/
+    common.py                <- shared imports; every gui module does
+                                `from .common import *`. Add new shared imports HERE.
+    dialogs.py               <- the big build/sign/broadcast dialog
+                                (BalBuildWillDialog, task_phase1/2), wizard glue.
+    widgets.py               <- WillSettingsWidget + wizard widgets/labels.
+    window.py                <- BalWalletWindow (build_will, check_will, get_transactions).
+    lists.py, calendar.py, theme.py, window_utils.py, ...
+tests/                       <- pytest suite (see run command below).
+electrum-src/                <- a copy of Electrum source, used ONLY for tests
+                                (PYTHONPATH=electrum-src). NOT shipped in the ZIP.
+build_zip.py                 <- builds the shippable ZIP (37 files).
+CHANGELOG.md                 <- numbered task log (English).
+.agent_memory_tasks.md       <- terse internal memory notes per task batch.
+HANDOFF.md                   <- this file.
 ```
 
-### Run the full test suite (must stay GREEN: 239 passed)
+---
+
+## 3. How to build, test and lint
+
+Run everything from `/home/user/webapp`.
+
+**Full test suite (expected: 258 passed as of v0.4.7):**
 ```bash
-cd /home/user/webapp
 QT_QPA_PLATFORM=offscreen PYTHONPATH=electrum-src python3 -m pytest \
   tests/test_core_*.py tests/test_gui_*.py \
   tests/test_anticipate_past_locktime.py tests/test_anticipate_manual_locktime.py \
   tests/test_group_b_auto_sign.py tests/test_group_c_settings.py \
-  tests/test_group_d_alarms.py tests/test_group_e_mock_giovanna7.py -q
+  tests/test_group_d_alarms.py tests/test_group_e_mock_giovanna7.py \
+  tests/test_group_f_heir_change_rebuild.py tests/test_group_g_basic_calendar.py -q
 ```
 
-### Ruff (only PRE-EXISTING noise is acceptable)
+**Lint (only NEW errors matter; ignore pre-existing noise):**
 ```bash
-cd /home/user/webapp && ruff check bal/<changed files>
+ruff check <files> | grep -oE "^[^ ]+\.py:[0-9]+:[0-9]+: [A-Z][0-9]+" \
+  | grep -vE "F401|F403|F405|F841"
 ```
-Pre-existing warnings that are NOT your fault and can be ignored:
-- `F401/F403/F405` star-import noise (`from .common import *`).
-- `F841` at: `will.py:151`, `dialogs.py:615` (`except NoHeirsException as e`),
-  `lists.py:185`, `lists.py:272`.
-- `E501` long lines in several pre-existing spots.
+Pre-existing, KNOWN-OK ruff noise: `F401/F403/F405` (star-imports via
+`from .common import *`) and 2× `F841` (an unused `e` in two `except` blocks).
+Do NOT "fix" these unless asked — they are intentional / out of scope.
 
-### Git / PR / Release workflow
-- `setup_github_environment` first. If `git push` fails with
-  "Invalid username or token", CALL `setup_github_environment` AGAIN, then retry.
-- Token for API calls:
-  `TOKEN=$(sed -n 's#https://\([^:]*\):\([^@]*\)@.*#\2#p' ~/.git-credentials | head -1)`
-- Repo for API: `Bitcoin-after-life/test`.
-- Releases published so far: v0.3.6, v0.3.7, v0.3.8, **v0.3.9 (latest)**.
-- Attach the ZIP as a release asset via the uploads API.
-
----
-
-## 4. CURRENT STATE (as of v0.3.9, COMMITTED + RELEASED)
-
-v0.3.9 is merged to `main` (PR #11) and released with the ZIP attached.
-sha256 of the released ZIP: `cd52b6f5e6276fb707ea4bf477a00bd0469dfd88960282fb74c219ee0f5f4292`.
-
-What shipped in v0.3.9 (TASK A/B/C/D + regression fix A3):
-- **A** clearer "Will expired" message: shortened will id (8+8 chars via
-  `Will._short_will_id`) + readable UTC date (`Will._format_locktime`) instead of
-  raw UNIX timestamp; shown ORANGE (warning) not RED (error) in the wizard.
-- **A2** message split on two lines via `<br>` (rendered as HTML by `msg_warning`).
-- **B** History labels (text only): inheritance tx → `BAL Inheritance transaction`;
-  invalidate tx → `BAL Invalidate transaction`. Colours = Electrum defaults
-  (Electrum colours outgoing tx descriptions red by itself, history_list.py:193-196).
-- **C** "No will-executor TX" checkbox in plugin Settings (`plugin.py`), bound to
-  existing `NO_WILLEXECUTOR` config (default ON, line plugin_base.py:193), with help
-  text "Create a will that does not require a Will-executor; it can be saved, for
-  example, on a USB stick, and a copy can be given to the heirs." Included in reset.
-- **D** wizard button "Create your will" → "Build Your Will" (lists.py:473).
-- **A3 regression fix:** adding an heir to an expired will via the wizard no longer
-  failed to invalidate. Implemented a `"invalidate_classic"` signal returned from
-  `task_phase1` and handled in `on_success_phase1` (dialogs.py) that closes the
-  wizard and shows a popup telling the user to use `Tools → Invalidate`.
-  **NOTE: this popup text is about to be CHANGED — see the pending task below.**
-
----
-
-## 5. PENDING TASK (NOT STARTED) — UNIFY THE INVALIDATE PROCEDURE
-
-### Problem the user reported
-There are currently TWO different "invalidate" procedures, and the user wants ONE
-identical behaviour for BOTH the **CHECK button** and the **WIZARD**.
-
-- **PROCEDURE 1 "classic/manual"** = `window.py::invalidate_will` (line ~695):
-  waiting dialog → "please sign and broadcast" popup → CLASSIC Electrum tx window
-  (Sign/Broadcast buttons) → **SETS** history label "BAL Invalidate transaction"
-  (line ~704). Used by: Tools→Invalidate menu (lists.py:468→571), a dialog button
-  (dialogs.py:1356), the on-close/postpone paths (window.py:539,576,614).
-  **This window opens correctly IN FRONT** (user confirmed) because nothing else
-  is closing at the same time.
-- **PROCEDURE 2 "automatic"** = `dialogs.py::invalidate_task` (line ~902):
-  password prompt inside the wizard → sign + auto-broadcast
-  (`loop_broadcast_invalidating`, line ~729) → **does NOT set the history label**.
-  Used by the CHECK button and the FIRST `WillExpiredException` handler in
-  `task_phase1` (dialogs.py:594 → `return None, Will.invalidate_will` at ~598,
-  which makes `on_success_phase1` see `have_to_sign is None` → password prompt).
-
-### CHECK button flow (important)
-`lists.py:545 check()` → `BalBuildWillDialog(...).build_will_task()` →
-`task_phase1` → `on_success_phase1`. **It is the SAME engine as the wizard.**
-
-### FINAL REQUIREMENT (user-approved, OPTION A refined)
-Make CHECK and WIZARD behave IDENTICALLY for an expired will:
-1. First show a **WARNING popup** (REMOVE the old "use the top-right menu
-   Tools → Invalidate" wording).
-2. Then **AUTOMATICALLY open the CLASSIC Electrum sign window** (PROCEDURE 1,
-   `window.py::invalidate_will`) so the label is set and the user can Sign + Broadcast.
-3. Sequence: warning popup → user clicks OK → classic sign window opens BY ITSELF,
-   IN FRONT.
-
-### APPROVED WARNING POPUP TEXT (verbatim, English per R1)
+**Build the ZIP (always clear caches first so zipimport doesn't ship stale .pyc):**
+```bash
+find bal -name "__pycache__" -type d -exec rm -rf {} + ; find bal -name "*.pyc" -delete
+python3 build_zip.py bal-electrum-plugin-vX.Y.Z.zip      # produces 37 files
 ```
-Your will has expired and must be invalidated before it can be rebuilt.
-A transaction window will now open:
-please SIGN and then BROADCAST it to invalidate your old will.
-After the invalidation is confirmed, press the Check button to finish the will.
+
+**Bump version — there are FOUR files, keep them in sync:**
 ```
-(The user wrote "SIGN and then  BROADCAST" with a double space — normalize to a
-single space unless he objects.)
+bal/core/plugin_base.py   ->  __version__ = "X.Y.Z"  # AUTOMATICALLY GENERATED DO NOT EDIT
+bal/__init__.py           ->  __version__ = "X.Y.Z"
+bal/VERSION               ->  X.Y.Z
+bal/manifest.json         ->  "version": "X.Y.Z",
+```
 
-### Implementation approach (agreed in principle; still needs final PLAN + OK)
-- Route the expired cases (FIRST handler at ~594, the `invalidate_classic` block,
-  and therefore the CHECK button) through ONE shared helper that:
-  (a) closes the CHECK/wizard dialog FIRST,
-  (b) shows the warning popup,
-  (c) then calls `self.bal_window.invalidate_will()` (PROCEDURE 1) LAST, so the
-      classic window is the last thing opened and stays in front.
-- Drop the use of PROCEDURE 2 (`invalidate_task`) for the expired case.
-- **KNOWN RISK / why this is delicate:** earlier attempts to auto-open the classic
-  window *while the wizard was closing* put it BEHIND the main wallet window on the
-  user's machine (Windows focus/stacking). The fix is to make sure NOTHING closes
-  AFTER the classic window opens (close the dialog first, open the tx window last).
-  `Tools → Invalidate` works perfectly precisely because no other window is closing.
-- The user has hinted he may add MORE requirements before this is implemented, so
-  CONFIRM the full scope before coding.
-
-### Status: WAITING. Do NOT code yet. Build full PLAN → wait OK (R4) → zip-first.
+**IMPORTANT for the owner when testing:** after installing a ZIP, the owner
+must **fully restart Electrum** (not just reload the plugin) — Electrum's
+`zipimport` caches modules, so a partial reload runs stale code.
 
 ---
 
-## 6. KEY FILE / LINE REFERENCES (verify line numbers, they drift)
+## 4. Key technical knowledge (hard-won — saves you hours)
 
-- `bal/core/will.py`
-  - `check_will()` order (line ~561): `check_invalidated` → `check_will_expired`
-    (raises `WillExpiredException`) → `search_rai` (raises `HeirNotFoundException`).
-  - `invalidate_will()` static (line ~394) builds the invalidation PartialTransaction.
-  - `_short_will_id` / `_format_locktime` helpers + the expired message (with `<br>`).
-- `bal/gui/qt/dialogs.py`
-  - `BalBuildWillDialog` is the CHECK + wizard engine.
-  - `build_will_task()` (~530) starts `task_phase1`.
-  - `task_phase1()` (~542): first `check_will()`; first `WillExpiredException`
-    handler (~594) → `return None, Will.invalidate_will(...)`; `NotCompleteWill`/
-    `HeirNotFound` → `have_to_build`; inner `check_will()`; inner `WillExpiredException`
-    (~659) → currently returns `"invalidate_classic", None`.
-  - `on_success_phase1()` (~924): unpacks `(have_to_sign, tx)`. If
-    `have_to_sign == "invalidate_classic"` → shows popup. If `have_to_sign is None`
-    → password prompt "Invalidate your old will" → `invalidate_task` (PROCEDURE 2).
-  - `invalidate_task()` (~902) + `loop_broadcast_invalidating()` (~729): PROCEDURE 2.
-  - `QTimer` is available via `from .common import *` (defined in common.py:53).
-- `bal/gui/qt/window.py`
-  - `invalidate_will()` (~695): PROCEDURE 1 (the "good" one). Sets label at ~704.
-  - `show_transaction_real()` (~656) uses `show_on_top(d, modal_to_window=False)`.
-  - on-close/postpone expired handling at ~539, ~576, ~614.
-- `bal/gui/qt/lists.py`
-  - `check()` (~545): the CHECK button. `invalidate_will()` (~571). Menu actions
-    "Check"/"Invalidate" at ~467/468. Wizard button "Build Your Will" at ~473.
-- `bal/gui/qt/plugin.py`: settings dialog; "No will-executor TX" checkbox + reset.
-- `bal/gui/qt/window_utils.py`: `show_on_top` (~100), `bring_to_front` (~52),
-  `show_modal` (~86).
-- `bal/gui/qt/common.py`: `add_widget` helper (~98); imports `QTimer`, `Qt`, etc.
+- **Locktimes are UNIX timestamps only.** Block-height locktimes were removed
+  (CHANGELOG #1). Ordering/expiry compare timestamps.
+- **`heirs.py` data shape.** An heir is a list indexed by constants
+  (`heirs.py` top): `HEIR_ADDRESS=0`, `HEIR_AMOUNT=1` (sats or `"<n>%"`),
+  `HEIR_LOCKTIME=2`, `HEIR_REAL_AMOUNT=3` (resolved sats, or the string
+  `"DUST: <n>"` when below the dust limit), `HEIR_DUST_AMOUNT=4` (raw dust sats).
+- **Will-executor pseudo-heirs.** Internally, each selected will-executor is
+  injected as a fake "heir" whose NAME starts with the reserved marker
+  `w!ll3x3c"` (i.e. `'w!ll3x3c"' + url + '"' + str(locktime)`). Its amount is
+  the executor `base_fee` (always non-dust). When you count/iterate "real"
+  heirs you MUST skip names starting with `w!ll3x3c"`.
+- **Transaction-building pipeline:**
+  `window.build_will()` → `Heirs.get_transactions()` (recursive over locktimes)
+  → `Heirs.buildTransactions()` → `Heirs.prepare_lists()` (builds the
+  `locktimes` dict for ALL future locktimes, resolves amounts, marks dust)
+  and `prepare_transactions()` (builds ONE tx for the LOWEST locktime only;
+  the recursion handles the others via leftover `available_utxos`).
+- **DUST logic (v0.4.7 — verify before touching):**
+  - The "all heirs are dust" guard lives at the END of `prepare_lists`
+    (NOT in `prepare_transactions`). Reason: `prepare_transactions` only sees
+    the single lowest locktime, so a guard there would FALSE-POSITIVE block a
+    will whose later locktimes still have valid heirs. `prepare_lists` is the
+    only place that sees ALL heirs across ALL locktimes with their final dust
+    state (fixed AND percentage).
+  - Guard: count real heirs (skip `w!ll3x3c"`); if there are real heirs but
+    NONE has a valid (non-`"DUST"`) `HEIR_REAL_AMOUNT`, raise
+    `HeirAmountIsDustException` (defined in `heirs.py`). A mix of dust + valid
+    heirs keeps building normally.
+  - **Critical nuance:** with FIXED amounts and a LARGE balance, leftover funds
+    are REDISTRIBUTED (`normalize_perc(..., real=True)`), so small fixed
+    amounts end up with a VALID `HEIR_REAL_AMOUNT` (not dust). The real
+    all-dust case is **small balance + percentage heirs** (matches the owner's
+    log: shares of 214 / 316 / 3 sat). Tests reproduce this with
+    `prepare_lists(800, 100, wallet)` and `"40%"/"60%"` heirs.
+  - The exception is NOT a `WillExecutorFeeException`, so it skips that handler
+    in `buildTransactions` and propagates cleanly to the GUI.
+  - GUI: `dialogs.py task_phase1` has a dedicated `except
+    HeirAmountIsDustException` BEFORE the generic `except Exception`. It shows a
+    RED message and stops (`return False, None`) — no signing/checking, no
+    empty will in the list. `HeirAmountIsDustException` is imported in
+    `common.py` and re-exported via `from .common import *`.
+- **`broadcast_transaction` returns `None`** (Electrum `network.py`). To get a
+  txid, use `tx.txid()` — do NOT rely on the broadcast return value
+  (this was the root cause of the missing "BAL Invalidate transaction" label,
+  CHANGELOG #21 / v0.4.5).
+- **Qt label truncation gotcha (CHANGELOG #22).** A `QLabel` added with
+  `alignment=Qt.AlignmentFlag.AlignLeft` is NOT stretched by Qt, so word-wrap
+  computes on a narrow sizeHint and the text gets truncated. Fix: drop the
+  alignment flag, add `setSizePolicy(Expanding, Minimum)` + `setMinimumWidth`.
+  With `setWordWrap(True)`, an explicit `\n` in the text forces a line break.
+- **`BalBuildWillDialog` report area.** Messages are accumulated as HTML in
+  `self.labels` and joined by `msg_update` (`"<br><br>".join(...)`, `\n`→`<br>`).
+  The report is inside a `QScrollArea` (v0.4.7: `setMinimumHeight(500)`,
+  `setMaximumHeight(700)`); the Close button sits BELOW the scroll area so it
+  stays reachable.
 
 ---
 
-## 7. HOW TO RESUME IN A NEW CHAT (any model)
+## 5. Git / delivery workflow
 
-Tell the new assistant:
-> "Read `/home/user/webapp/HANDOFF.md`, then `CHANGELOG.md` and
-> `.agent_memory_tasks.md`. Follow rules R1–R4 and zip-first. The next task is the
-> 'unify invalidate procedure' task in HANDOFF.md section 5 — present the PLAN and
-> wait for my OK before coding."
+- **Branch:** work on `genspark_ai_developer`. Open PRs into `main`.
+- **Commit policy:** ZIP-FIRST — build a test ZIP, let the owner confirm it
+  works, THEN commit. (This differs from "commit after every change"; the owner
+  explicitly prefers ZIP-first because they manually test each build.)
+- Before opening/updating a PR: `git fetch origin main`, rebase, resolve
+  conflicts preferring remote `main` unless a local change is essential,
+  squash local commits into ONE comprehensive commit, push (force if needed),
+  then create/update the PR and SHARE the PR URL with the owner.
+- The previous PR for this line of work is **PR #13** on the repo.
+- Deliverable ZIPs are uploaded with the file-wrapper tool and the URL is given
+  to the owner. (Latest: v0.4.7.)
 
-Everything needed (rules, state, pending task, build/test commands, file map) is in
-this file. The real work is safe in Git (PR #11, release v0.3.9) and in CHANGELOG.md.
+---
+
+## 6. Version history (short — full detail in CHANGELOG.md)
+
+- **v0.4.5** — fix invalidation loop; add "BAL Invalidate transaction" label on
+  the automatic path (root cause: `broadcast_transaction` returns None → use
+  `tx.txid()`); fix wizard text truncation.
+- **v0.4.6** — DUST one-line-per-heir report; heirs on one line; scrollable
+  report area; wizard final check (`on_next_we` now calls
+  `check_transactions`); wizard truncation fix (remove AlignLeft); anticipated-
+  date notice styling.
+- **v0.4.7** — report area opens 500px tall (max 700); heirs reverted to ONE
+  per line (green/bold); explicit `\n` line breaks in two wizard texts
+  (after "(or backup)" and after "miner fees"); **ALL-DUST guard** in
+  `prepare_lists` that blocks (clear RED message) only when EVERY heir is dust;
+  3 new tests pinning the dust behaviour. 258 tests pass.
+
+---
+
+## 7. How to resume (checklist for the next AI)
+
+1. Read this file, then `CHANGELOG.md` (last entries) and `.agent_memory_tasks.md`.
+2. Confirm the environment: `git status`, current branch, `bal/VERSION`.
+3. Run the full test suite (Section 3) — expect all green (258 as of v0.4.7).
+4. Talk to the owner in **Italian**, write everything else in **English**.
+5. For any change: present a PLAN, wait for "OK" (R4), then implement, test,
+   build a ZIP, let the owner test, and only commit after explicit confirmation.
+6. Keep credit usage low: summarize, don't paste big code blocks; batch work.

@@ -82,6 +82,98 @@ def test_heirs_prepare_lists():
 
 
 # ------------------------------------------------------------------ #
+# ALL-DUST GUARD (prepare_lists) - owner request, v0.4.7
+#
+# The plugin must REFUSE to build an inheritance when EVERY heir's share is
+# below the Bitcoin dust limit (HeirAmountIsDustException), but must keep
+# building normally when at least one heir is valid - including the tricky
+# case where the valid heir lives on a DIFFERENT locktime than the dust one.
+# These three tests pin that behaviour down so it cannot silently regress.
+# ------------------------------------------------------------------ #
+
+def test_prepare_lists_all_dust_raises():
+    """All heirs below the dust limit -> HeirAmountIsDustException.
+
+    Reproduces the owner's log: a very small wallet balance split between
+    percentage heirs gives each one a tiny share (like 214/316/3 sat), all
+    below the dust threshold. prepare_lists must then REFUSE to build the
+    "empty" inheritance and raise the exception.
+
+    NOTE: we deliberately use *percentage* heirs with a *small* balance. With
+    fixed amounts and a large balance the leftover funds are redistributed to
+    the heirs (so they would no longer be dust) - that is a different, valid
+    case and is covered by the other prepare_lists tests.
+    """
+    from bal.core.heirs import HeirAmountIsDustException
+
+    wallet = MagicMock()
+    wallet.dust_threshold.return_value = 500
+    h = Heirs.__new__(Heirs)
+    # Tiny balance (800 sat) split 40%/60% -> each share is far below 500.
+    h.update({
+        "a": ["bcrt1q087zm5m3jrhfg78zflqefhcr9heh4c98kzmvhp", "40%", "30d"],
+        "b": ["bcrt1q08z5t4x74u2883sx2qwsmzk2hj8e5n7z83e4vy", "60%", "30d"],
+    })
+    raised = False
+    try:
+        h.prepare_lists(800, 100, wallet)
+    except HeirAmountIsDustException:
+        raised = True
+    assert raised, "all-dust will must raise HeirAmountIsDustException"
+
+
+def test_prepare_lists_mixed_dust_continues():
+    """Some dust + at least one valid heir -> build continues normally.
+
+    The guard must NOT fire here: one heir's share is dust (a 1% slice of a
+    small balance), the other is a valid fixed amount, so the inheritance is
+    still feasible (unchanged behaviour).
+    """
+    from bal.core.heirs import HeirAmountIsDustException
+
+    wallet = MagicMock()
+    wallet.dust_threshold.return_value = 500
+    h = Heirs.__new__(Heirs)
+    h.update({
+        "ok":   ["bcrt1q087zm5m3jrhfg78zflqefhcr9heh4c98kzmvhp", 5000, "30d"],
+        "dust": ["bcrt1q08z5t4x74u2883sx2qwsmzk2hj8e5n7z83e4vy", "1%", "30d"],
+    })
+    raised = False
+    try:
+        result, _onlyfixed = h.prepare_lists(5200, 100, wallet)
+    except HeirAmountIsDustException:
+        raised = True
+    assert not raised, "a mix of dust + valid heirs must NOT be blocked"
+    assert isinstance(result, dict) and len(result) > 0
+
+
+def test_prepare_lists_multi_locktime_continues():
+    """Dust heir and valid heir on DIFFERENT locktimes -> build continues.
+
+    This pins down the false-positive fix: prepare_transactions only ever sees
+    the lowest locktime, so the dust check MUST live in prepare_lists (which
+    sees ALL locktimes). A dust heir at the earlier date must not block a valid
+    heir at the later date.
+    """
+    from bal.core.heirs import HeirAmountIsDustException
+
+    wallet = MagicMock()
+    wallet.dust_threshold.return_value = 500
+    h = Heirs.__new__(Heirs)
+    h.update({
+        "early_dust": ["bcrt1q087zm5m3jrhfg78zflqefhcr9heh4c98kzmvhp", "1%", "30d"],
+        "late_valid": ["bcrt1q08z5t4x74u2883sx2qwsmzk2hj8e5n7z83e4vy", 5000, "60d"],
+    })
+    raised = False
+    try:
+        result, _onlyfixed = h.prepare_lists(5200, 100, wallet)
+    except HeirAmountIsDustException:
+        raised = True
+    assert not raised, "valid heir on a later locktime must NOT be blocked"
+    assert isinstance(result, dict) and len(result) > 0
+
+
+# ------------------------------------------------------------------ #
 # Heirs static methods (pure but use Electrum constants)
 # ------------------------------------------------------------------ #
 

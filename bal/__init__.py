@@ -34,4 +34,4 @@ The plugin targets Electrum 4.7.2 (the last stable release exposing
 ``json_db.register_dict``) and PyQt6.
 """
 
-__version__ = "0.3.9"
+__version__ = "0.4.7"

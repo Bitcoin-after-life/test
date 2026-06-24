@@ -91,7 +91,7 @@ class BalPlugin(BasePlugin):
     """
 
     _version = None
-    __version__ = "0.3.9"  # AUTOMATICALLY GENERATED DO NOT EDIT
+    __version__ = "0.4.7"  # AUTOMATICALLY GENERATED DO NOT EDIT
 
     # Command used to open an .ics calendar file, per operating system.
     default_app = {
@@ -190,11 +190,31 @@ class BalPlugin(BasePlugin):
         # most one event per available day.
         self.NUM_REMINDERS = BalConfig(config, "bal_num_reminders", 3)
 
-        self.NO_WILLEXECUTOR = BalConfig(config, "bal_no_willexecutor", True)
+        # "Add transaction without will-executor" backup tx. Default OFF
+        # (False): a fresh wallet does NOT create the extra no-will-executor
+        # backup transaction (the "azure" tx), so a plain inheritance has no
+        # backup tx unless the user explicitly enables it from the wizard. The
+        # chosen value is persisted per wallet, so reopening the plugin always
+        # follows what is saved in that wallet (the default only applies when no
+        # value has been stored yet, i.e. new wallets).
+        self.NO_WILLEXECUTOR = BalConfig(config, "bal_no_willexecutor", False)
         self.HIDE_REPLACED = BalConfig(config, "bal_hide_replaced", True)
         self.HIDE_INVALIDATED = BalConfig(config, "bal_hide_invalidated", True)
         self.ALLOW_REPUSH = BalConfig(config, "bal_allow_repush", True)
         self.FIRST_EXECUTION = BalConfig(config, "bal_first_execution", True)
+        # SIMPLE / ADVANCED mode (global, plugin-wide).
+        #
+        # "basic"    -> SIMPLE mode (DEFAULT): hides advanced controls (the
+        #               Raw/Date selector and the "Check Alive" field/icon) and
+        #               disables the "check alive" postpone behaviour, so the
+        #               plugin is easier for non-technical users.
+        # "advanced" -> shows every control (the original behaviour).
+        #
+        # This is stored in Electrum's GLOBAL config (not in the wallet file),
+        # so it never affects compatibility with existing wallets: an old wallet
+        # simply opens with whatever global value is set, and its owner can
+        # switch to "advanced" from the plugin settings whenever they want.
+        self.USER_TYPE = BalConfig(config, "bal_user_type", "basic")
         self.WELIST_SERVER = BalConfig(
             config, "bal_welist_server", "https://welist.bitcoin-after.life/"
         )
@@ -314,6 +334,16 @@ class BalPlugin(BasePlugin):
         if not will_settings.get("locktime"):
             will_settings["locktime"] = defaults['locktime']
         return will_settings
+
+    def is_basic_mode(self):
+        """Return True when the plugin runs in SIMPLE ("basic") mode.
+
+        Centralises the USER_TYPE check so the GUI never compares the raw
+        string in many places. Anything other than the explicit "advanced"
+        value is treated as basic, so the safe/simple behaviour is the default
+        even if the stored value is missing or unexpected.
+        """
+        return str(self.USER_TYPE.get()).lower() != "advanced"
 
     @staticmethod
     def default_will_settings():

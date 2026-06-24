@@ -62,7 +62,8 @@ from PyQt6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QCheckBox,
 
 # --- Core (GUI-free) logic layer ---
 from ...core.plugin_base import BalPlugin, BalTimestamp
-from ...core.heirs import HEIR_DUST_AMOUNT, HEIR_REAL_AMOUNT, Heirs
+from ...core.heirs import (HEIR_DUST_AMOUNT, HEIR_REAL_AMOUNT,
+                           HeirAmountIsDustException, Heirs)
 from ...core.util import Util
 from ...core.will import (AmountException, HeirChangeException,
                           HeirNotFoundException, NoHeirsException,

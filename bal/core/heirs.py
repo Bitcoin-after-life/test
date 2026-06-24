@@ -554,6 +554,43 @@ class Heirs(dict, Logger):
                 locktimes[locktime] = {key: value}
             else:
                 locktimes[locktime][key] = value
+
+        # ALL-DUST GUARD (owner request, see CHANGELOG / log analysis).
+        #
+        # WHY HERE: ``locktimes`` now contains EVERY heir across EVERY locktime,
+        # with their final resolved amount already computed and dust-marked
+        # ("DUST: <n>" in HEIR_REAL_AMOUNT) by fixed_percent_lists_amount /
+        # normalize_perc above. This is the only place where we can reliably
+        # tell whether *all* heirs are dust, for BOTH fixed and percentage
+        # heirs and across all dates. ``prepare_transactions`` only sees the
+        # single lowest locktime, so checking there would wrongly block a will
+        # whose later locktimes still have valid heirs (false positive).
+        #
+        # WHAT: count the REAL heirs (excluding the internal will-executor
+        # pseudo-heirs, whose names start with the reserved ``w!ll3x3c"``
+        # marker) and how many of them have a valid, non-dust amount. If there
+        # are real heirs but NONE of them is payable, the inheritance would pay
+        # nobody (only the change + the will-executor fee). Previously such an
+        # "empty" will was still built, signed, checked and listed; we now
+        # refuse it and raise HeirAmountIsDustException so the GUI can show a
+        # clear message and stop. A mix of dust + valid heirs keeps building
+        # normally with the valid ones (unchanged behaviour).
+        real_heirs = 0
+        valid_real_heirs = 0
+        for heirs_at_locktime in locktimes.values():
+            for name, heir in heirs_at_locktime.items():
+                if str(name).startswith('w!ll3x3c"'):
+                    continue
+                real_heirs += 1
+                if len(heir) > HEIR_REAL_AMOUNT and "DUST" not in str(
+                    heir[HEIR_REAL_AMOUNT]
+                ):
+                    valid_real_heirs += 1
+        if real_heirs > 0 and valid_real_heirs == 0:
+            raise HeirAmountIsDustException(
+                "All heirs' shares are below the dust limit"
+            )
+
         return locktimes, onlyfixed
 
     def is_perc(self, key):

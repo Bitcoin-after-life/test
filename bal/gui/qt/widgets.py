@@ -75,6 +75,34 @@ def compute_reminder_offsets(days, count):
     return sorted(offsets, reverse=True)
 
 
+# Fixed reminder offsets (in days BEFORE the delivery date) used in BASIC mode.
+# In BASIC the check-alive parameter is hidden/unmanaged, so reminders cannot be
+# spread over it; instead the owner asked for three fixed reminders: 30, 10 and
+# 1 day before the inheritance delivery date.
+BASIC_REMINDER_OFFSETS = (30, 10, 1)
+
+
+def basic_reminder_offsets(days_to_deadline):
+    """Return the BASIC-mode reminder offsets that still fall in the future.
+
+    BASIC mode uses the fixed offsets in ``BASIC_REMINDER_OFFSETS`` (30, 10 and
+    1 day before the delivery date). Any offset that would land in the past is
+    dropped, because a reminder before "today" is useless: if the delivery date
+    is only ``days_to_deadline`` days away, only the offsets that are ``<=
+    days_to_deadline`` are kept.
+
+    Args:
+        days_to_deadline: whole days from now until the delivery date.
+
+    Returns:
+        A list of integer day-offsets (each ``>= 1``), sorted as in
+        ``BASIC_REMINDER_OFFSETS`` (descending: earliest reminder first). Empty
+        when the delivery date is less than one day away.
+    """
+    horizon = max(int(days_to_deadline), 0)
+    return [off for off in BASIC_REMINDER_OFFSETS if 1 <= off <= horizon]
+
+
 class ClickableLabel(QLabel):
     doubleClicked = pyqtSignal()
 
@@ -256,6 +284,13 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
             1: self.locktime_date_e,
         }
         self.combo.addItems(options)
+        # SIMPLE / ADVANCED (task: hide the Raw/Date selector in BASIC mode).
+        #
+        # In BASIC mode the user must not see or use the Raw/Date selector:
+        # every date field is forced to the calendar ("Date") editor and the
+        # combo is hidden. We keep a flag so the rest of __init__ can force the
+        # Date editor regardless of the stored value's format.
+        self._basic_mode = self.bal_window.bal_plugin.is_basic_mode()
         default_index = 0
         if not default_locktime:
             default_locktime = self.bal_window.bal_plugin.WILL_SETTINGS.get()[self.base_field]
@@ -264,6 +299,10 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
             default_index = 1
         except Exception:
             default_index = 0
+        # Force the calendar ("Date") editor in BASIC mode so the user always
+        # picks a date and never sees the RAW input ("30d"/"1y" style).
+        if self._basic_mode:
+            default_index = 1
         #hbox.addWidget(QLabel(self.label_text))
         help_button=HelpButton(self.help_text)
         help_button.setText(self.label_text)
@@ -290,6 +329,11 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
         self.set_value(default_locktime)
         self.current_value=default_locktime
         hbox.addWidget(self.combo)
+        # In BASIC mode hide the Raw/Date selector entirely: the field stays
+        # locked on the calendar editor chosen above, so the user only ever
+        # picks a Date and cannot switch to RAW.
+        if self._basic_mode:
+            self.combo.setVisible(False)
         for w in self.editors:
             hbox.addWidget(w)
 
@@ -594,13 +638,19 @@ class LockTimeWidget(BalTimeEditWidget):
         "<b>DELIVERY TIME</b><br><br>"
         "Set Locktime for transactions.<br>"
         "Any time is needed transaction will be anticipated by 1day<br><br>"
+        # The Raw locktime syntax below is only available in ADVANCED mode
+        # (in BASIC mode the Raw/Date selector is hidden and only the Date
+        # picker is shown), so we say so explicitly to avoid confusing users.
+        "(ONLY IN ADVANCED MODE)<br>"
         "if you choose Raw, you can insert various options based on suffix:<br>"
         " - d: number of days after current day(ex: 1d means tomorrow)<br>"
         " - y: number of years after currrent day(ex: 1y means one year from today)<br>"
     )
     label_text = "🚛"
     #label_text = "Locktime"
-    tooltip_text = "Delivery time"
+    # Hover tooltip for the delivery-time icon; mirrors the style of the fee
+    # icon tooltip ("..., click for more information") so the two are consistent.
+    tooltip_text = "Delivery Time, click for more information"
     base_field = "locktime"
 
     def __init__(self, bal_window, parent, init_value=None):
@@ -641,6 +691,15 @@ class WillSettingsWidget(QWidget):
         self.widgets["threshold"] = ThresholdTimeWidget(bal_window, self)
         self.widgets["locktime"].valueEdited.connect(self.on_locktime_change)
         self.widgets["threshold"].valueEdited.connect(self.on_locktime_change)
+        # SIMPLE / ADVANCED: in BASIC mode hide the whole "Check Alive"
+        # (threshold) row, including its leading icon. The widget is still
+        # created and kept in self.widgets so the rest of the code (and the
+        # saved settings) keep working; it is only hidden from view. The
+        # Delivery time (locktime) row stays visible. We hide it after creation
+        # so both the horizontal (toolbar/Heirs) and vertical (wizard) layouts
+        # below add an already-hidden widget.
+        if bal_window.bal_plugin.is_basic_mode():
+            self.widgets["threshold"].setVisible(False)
         # self.widgets['baltx_fees'].valueChange.connect(self.bal_window.update_setting_widgets)
         self.on_locktime_change()
         self.widgets["baltx_fees"] = BalTxFeesWidget(bal_window, self)
@@ -656,52 +715,134 @@ class WillSettingsWidget(QWidget):
             box.addWidget(self.calendar_button)
             box.addWidget(self.widgets["baltx_fees"])
         else:
-            # Vertical layout (the "Build your will" wizard): make every row the
-            # same width and left aligned so they all fit in one tidy block,
-            # instead of letting the calendar button and the fee field stretch to
-            # the dialog's right edge (which made them far wider than the date
-            # rows above).
-            #
-            # IMPORTANT: the leading icons keep their ORIGINAL size.  The icons
-            # are HelpButtons, which already pin themselves to a fixed width
-            # (2.2 * char_width_in_lineedit()); we must NOT widen them, otherwise
-            # they look oversized compared with the original toolbar layout.  We
-            # only need to (1) align the calendar row's left edge with the icons'
-            # original width and (2) cap every row to the date-row width.
+            # ----------------------------------------------------------------- #
+            # Vertical layout (the "Build your will" wizard) - Layout H.         #
+            #                                                                     #
+            # User requirements (allegato4):                                      #
+            #   * the leading ICONS (delivery time, calendar, fee and - in       #
+            #     ADVANCED mode - check-alive) must be aligned one under the      #
+            #     other on the left;                                             #
+            #   * the editable FIELDS must all start from the SAME x position,    #
+            #     just to the right of their icon;                               #
+            #   * the fee field must be WIDER (its up/down arrows were covering   #
+            #     the digits) - not a tiny box.                                  #
+            #                                                                     #
+            # DESIGN NOTE - why we do NOT pull the icon/field out of each        #
+            # composite into a shared grid: the LockTime / Check-Alive composites #
+            # hold TWO editors (Raw and Date) plus a Raw/Date combo that the user #
+            # can switch at runtime in ADVANCED mode; ``self.editor`` is swapped  #
+            # live (see on_current_index_changed). Reparenting only the currently #
+            # active editor would orphan the other editor and the combo and break #
+            # ADVANCED mode. So we keep every composite INTACT and instead align  #
+            # them by:                                                            #
+            #   1. forcing every leading icon (prefix_widget) to the SAME fixed   #
+            #      width, so each composite's field starts at the same x; and     #
+            #   2. stacking the whole composites left-aligned in the VBox.        #
+            # This is robust to the Raw/Date switching and keeps all internal     #
+            # logic working untouched.                                            #
+            # ----------------------------------------------------------------- #
             locktime_w = self.widgets["locktime"]
             threshold_w = self.widgets["threshold"]
             fees_w = self.widgets["baltx_fees"]
 
-            # Original icon width (HelpButton's own fixed width); used only to
-            # offset the calendar button so its field starts under the others.
-            icon_w = locktime_w.prefix_widget.sizeHint().width()
-
-            # Common row width = natural width of the date rows (the reference).
-            row_w = max(
-                locktime_w.sizeHint().width(),
-                threshold_w.sizeHint().width(),
+            # Common icon width = the widest leading icon (incl. the calendar
+            # button). Forcing every icon to this width makes the icons line up
+            # one under the other and, because each field sits immediately to the
+            # right of its icon, makes every field start at the same x too.
+            icon_w = max(
+                locktime_w.prefix_widget.sizeHint().width(),
+                threshold_w.prefix_widget.sizeHint().width(),
+                fees_w.prefix_widget.sizeHint().width(),
+                self.calendar_button.sizeHint().width(),
             )
-            for w in (locktime_w, threshold_w, fees_w):
-                w.setFixedWidth(row_w)
+            for icon in (
+                locktime_w.prefix_widget,
+                threshold_w.prefix_widget,
+                fees_w.prefix_widget,
+                self.calendar_button,
+            ):
+                icon.setFixedWidth(icon_w)
 
-            # The calendar row has no prefix icon: wrap it so it starts with an
-            # empty spacer of the icon width (calendar field aligned with the
-            # date/fee fields) and cap it to the same total width as the rows
-            # above, so it no longer stretches to the dialog's right edge.
-            calendar_row = QWidget(self)
-            calendar_box = QHBoxLayout(calendar_row)
-            calendar_box.setContentsMargins(0, 0, 0, 0)
-            calendar_box.setSpacing(0)
-            calendar_spacer = QWidget()
-            calendar_spacer.setFixedWidth(icon_w)
-            calendar_box.addWidget(calendar_spacer)
-            calendar_box.addWidget(self.calendar_button)
-            calendar_row.setFixedWidth(row_w)
+            # WIDEN the fee field (user feedback: the spin-box up/down arrows
+            # were covering the digits). ~8 chars leaves room for the value and
+            # the arrows.
+            fees_w.field_widget.setFixedWidth(8 * char_width_in_lineedit())
 
+            # WHY THE TEXT WAS TRUNCATED (allegato16, fixed here):
+            # A QLabel added to a box layout WITH an alignment flag (the old
+            # ``alignment=Qt.AlignmentFlag.AlignLeft``) is NOT stretched to the
+            # layout width - Qt gives it only its sizeHint. For a word-wrapped
+            # label that sizeHint width is ambiguous/narrow, so the text wrapped
+            # against an almost-minimum width and the reserved height was too
+            # small, cutting the sentence in half. setMinimumWidth alone did not
+            # help because the alignment flag still prevented horizontal stretch.
+            #
+            # TARGETED FIX:
+            #   1. give the whole vertical WillSettingsWidget a sensible minimum
+            #      width, so the box (and thus the labels) has real width to work
+            #      with even before the parent dialog stretches it;
+            #   2. add the two explanatory labels WITHOUT an alignment flag, so
+            #      they expand to the full box width and word-wrap correctly;
+            #   3. set an Expanding/Minimum size policy so the label takes the
+            #      available width and computes its height from that width
+            #      (heightForWidth), guaranteeing the full text is shown.
+            hint_min_width = 44 * char_width_in_lineedit()
+            self.setMinimumWidth(hint_min_width)
+
+            # Explanatory hint ABOVE the date field (wizard only): tell the user
+            # what the delivery date means. Wrapped so it fits the dialog width.
+            # The explicit "\n" forces the line break exactly where the owner
+            # asked (allegato2): after "(or backup)". With setWordWrap(True) the
+            # QLabel honours the newline, so the sentence always shows on two
+            # tidy lines instead of wrapping at an arbitrary point.
+            date_hint = QLabel(
+                _(
+                    "Enter the date on which you want the inheritance (or "
+                    "backup)\nof your Electrum wallet to take effect."
+                )
+            )
+            date_hint.setWordWrap(True)
+            date_hint.setMinimumWidth(hint_min_width)
+            date_hint.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+            )
+            # NOTE: added WITHOUT an alignment flag on purpose (see above), so
+            # the label is stretched to the full width and wraps correctly.
+            box.addWidget(date_hint)
+
+            # Stack the composites one under the other, all left-aligned so the
+            # fixed-width icons share a common left edge.
             box.addWidget(locktime_w, alignment=Qt.AlignmentFlag.AlignLeft)
             box.addWidget(threshold_w, alignment=Qt.AlignmentFlag.AlignLeft)
-            box.addWidget(calendar_row, alignment=Qt.AlignmentFlag.AlignLeft)
+            # In BASIC mode the Check-Alive (threshold) row is hidden entirely
+            # (it was already set invisible above); in ADVANCED mode it shows
+            # with its icon aligned under the delivery-time icon.
+            box.addWidget(
+                self.calendar_button, alignment=Qt.AlignmentFlag.AlignLeft
+            )
             box.addWidget(fees_w, alignment=Qt.AlignmentFlag.AlignLeft)
+
+            # Cautionary note BELOW the miner-fee field (wizard only): warn the
+            # user not to lower the miner fee unless they know what they do.
+            # Explicit "\n" break after "miner fees" (allegato2), same rationale
+            # as date_hint above.
+            fee_note = QLabel(
+                _(
+                    "Please note: Do not reduce the miner fees\nunless you "
+                    "know what you\u2019re doing"
+                )
+            )
+            fee_note.setWordWrap(True)
+            fee_note.setMinimumWidth(hint_min_width)
+            fee_note.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+            )
+            # Added WITHOUT an alignment flag (see date_hint above) so it
+            # stretches to full width and wraps correctly instead of truncating.
+            box.addWidget(fee_note)
+
+            self.apply_editable_dates()
+            return
 
         # Group C / C2: apply the current "Editable dates" setting to the date
         # fields. Done once at creation here, and re-applied later by
@@ -744,6 +885,39 @@ class WillSettingsWidget(QWidget):
         # editable outside the wizard only when the setting is ticked.
         self.widgets["baltx_fees"].set_read_only(not editable_dates)
 
+    def apply_user_type_visibility(self):
+        """Re-apply the BASIC/ADVANCED visibility of the Check-Alive field.
+
+        WHY this is needed (bug reported by the owner): the Check-Alive
+        (threshold) field is hidden in BASIC mode and shown in ADVANCED mode.
+        That visibility used to be decided ONLY in __init__. The toolbar
+        settings widgets of the WILL and HEIR tabs are created once and then
+        REUSED across the session (they are not rebuilt when the user switches
+        USER TYPE), so after switching from BASIC to ADVANCED the Check-Alive
+        field stayed hidden there. The wizard worked only because it is recreated
+        every time it is opened.
+
+        This method re-reads is_basic_mode() and shows/hides the Check-Alive
+        field accordingly. It is called from BalWindow.update_all() (which the
+        USER TYPE combo triggers when changed), exactly like apply_editable_dates
+        is, so toggling BASIC/ADVANCED takes effect immediately on the already
+        existing WILL/HEIR toolbars without restarting Electrum.
+
+        It is safe to call repeatedly and on either layout (horizontal toolbar
+        or vertical wizard): it only flips the visibility of the threshold
+        widget.
+        """
+        try:
+            basic = self.bal_window.bal_plugin.is_basic_mode()
+        except Exception:
+            # If the mode cannot be read, keep the field visible (the safe,
+            # information-preserving default).
+            basic = False
+        threshold = self.widgets.get("threshold")
+        if threshold is not None:
+            # Hidden in BASIC, visible in ADVANCED.
+            threshold.setVisible(not basic)
+
     def open_or_save_calendar(self):
         """Build and save an .ics calendar file with SEPARATE reminder events.
 
@@ -774,23 +948,43 @@ class WillSettingsWidget(QWidget):
         """
         now = BalCalendar.format_time(datetime.now())
 
-        # locktime = delivery deadline; threshold = start of the check-alive
-        # period. Both are datetimes exposed by the date widgets as ``.alarm``.
+        # locktime = delivery deadline. It is exposed by the date widget as
+        # ``.alarm`` and already reflects the (possibly auto-anticipated) minimum
+        # transaction locktime, so the calendar uses the correct delivery date.
         locktime = self.widgets["locktime"].alarm
-        threshold = self.widgets["threshold"].alarm
 
-        # Whole days available between check-alive and the deadline.
-        days = (locktime - threshold).days
-
-        # How many reminder events the user asked for (default 3 if unreadable).
-        try:
-            count = int(self.bal_window.bal_plugin.NUM_REMINDERS.get())
-        except Exception:
-            count = 3
-
-        # Day-offsets BEFORE the deadline, e.g. [30, 16, 1]. The list always
-        # ends with 1 (one day before the locktime) when >= 2 reminders fit.
-        offsets = compute_reminder_offsets(days, count)
+        # BASIC vs ADVANCED reminder strategy.
+        #
+        # In ADVANCED mode the reminders are spread uniformly across the
+        # check-alive (threshold) period, ending one day before the deadline.
+        #
+        # In BASIC mode the check-alive parameter is NOT shown nor managed by the
+        # user (it stays at an arbitrary default), so spreading reminders over it
+        # is meaningless. The owner asked that, in BASIC, the calendar simply
+        # saves the inheritance delivery date with three fixed reminders: 30 days
+        # before, 10 days before and 1 day before. We also drop any fixed offset
+        # that would fall in the past (a reminder before "today" is useless), so
+        # a short-dated will still gets the reminders that are still in the
+        # future.
+        if self.bal_window.bal_plugin.is_basic_mode():
+            # Whole days from now until the delivery date. Fixed offsets (30, 10,
+            # 1 day before) are applied by basic_reminder_offsets, which also
+            # drops any offset that would fall in the past.
+            days_to_deadline = (locktime - datetime.now()).days
+            offsets = basic_reminder_offsets(days_to_deadline)
+        else:
+            # ADVANCED: spread reminders over the check-alive period as before.
+            threshold = self.widgets["threshold"].alarm
+            # Whole days available between check-alive and the deadline.
+            days = (locktime - threshold).days
+            # How many reminders the user asked for (default 3 if unreadable).
+            try:
+                count = int(self.bal_window.bal_plugin.NUM_REMINDERS.get())
+            except Exception:
+                count = 3
+            # Day-offsets BEFORE the deadline, e.g. [30, 16, 1]. The list always
+            # ends with 1 (one day before the locktime) when >= 2 reminders fit.
+            offsets = compute_reminder_offsets(days, count)
 
         # Per-event heir details and the shared description/summary templates.
         heirs_details = "\r\n".join(
