@@ -1424,3 +1424,73 @@ confirms the ZIP works).
 
 **Outcome:** DONE (delivered as test ZIP v0.4.7; commit only after the user
 confirms the ZIP works).
+
+---
+
+## 24. v0.4.8 - Raw/Date selector on WILL/HEIR tabs, shorter report window, USER TYPE moved + "at My Risk" gate, executed/mempool inheritance note, "balance too low" recoloured, Reset button renamed
+
+**Date:** 2026-06-25
+
+**Goal (owner requests, this session):** seven small, independent UX fixes,
+delivered together in one version.
+
+**What changed:**
+
+- **#04 - Raw/Date selector now reappears on the WILL/HEIR tabs.**
+  `bal/gui/qt/widgets.py`
+  - Added `BalTimeEditWidget.apply_user_type_visibility()`: re-reads
+    `is_basic_mode()` and shows/hides ONLY the Raw/Date combo, WITHOUT changing
+    the current value or active editor (owner request: keep the value to avoid
+    confusing the delivery date with the inheritance).
+  - `WillSettingsWidget.apply_user_type_visibility()` now also calls the new
+    method on BOTH the `locktime` and `threshold` boxes. The reused toolbars used
+    to hide the combo forever after construction; now switching to ADVANCED (or a
+    raw value pushed from the wizard) reveals it without restarting Electrum.
+
+- **#3 - Building Will report window shorter.**
+  `bal/gui/qt/dialogs.py`: report scroll area minimum height `500 -> 450` px.
+
+- **#5 - "User Type" moved to the bottom of the settings.**
+  `bal/gui/qt/plugin.py`: the "User Type" row moved from the first grid row to
+  the bottom, just above "Rebroadcast transactions"; the other rows were
+  renumbered up by one.
+
+- **#6 - "at My Risk" gate before enabling ADVANCED.**
+  `bal/gui/qt/plugin.py` (`on_user_type_change`): selecting ADVANCED now prompts
+  "Type 'at My Risk' to enable ADVANCED mode"; the phrase is accepted
+  case-insensitively. A wrong phrase or a cancel reverts to BASIC.
+  `bal/gui/qt/common.py`: `QInputDialog` added to the shared Qt import.
+
+- **#7a - Reassuring note when the inheritance was already executed.**
+  `bal/gui/qt/dialogs.py`: added `_executed_inheritance_status()` (reads the
+  will items' CONFIRMED / MEMPOOL flags, CONFIRMED wins). In the
+  `NotCompleteWillException` branch of `task_phase1`, when the wallet is empty
+  because the inheritance went through, an extra line is shown on the "Checking
+  your will" row: "Inheritance already executed (on blockchain)" in GREEN
+  (CONFIRMED) or "Inheritance in mempool (waiting confirmation)" in ORANGE
+  (MEMPOOL). The original "changes" message is still shown afterwards.
+
+- **#7b - "balance too low" message recoloured.**
+  `bal/gui/qt/dialogs.py`: the text is now
+  "Balance is too low, or CheckAlive is in the past. Skipped" (a space added
+  before "Skipped") and rendered in ORANGE (`COLOR_WARNING`) instead of red,
+  since an empty wallet after execution is normal, not an error.
+
+- **Reset button renamed.**
+  `bal/gui/qt/plugin.py`: "Reset setting" -> "Reset to Default Setting".
+
+- Added `tests/test_group_h_v048.py` with 8 GUI-free tests pinning the
+  executed-inheritance detection rule (CONFIRMED > MEMPOOL > None) and the
+  "at My Risk" case-insensitive gate.
+
+- Version bumped 0.4.7 -> 0.4.8 (`plugin_base.py`, `__init__.py`, `VERSION`,
+  `manifest.json`).
+
+**Verification:**
+
+- `py_compile`: `widgets.py`, `dialogs.py`, `plugin.py`, `common.py` compile OK.
+- Full test suite: `266 passed` (258 previous + 8 new v0.4.8 tests).
+- `ruff`: no new errors (only pre-existing star-import / F841 noise).
+
+**Outcome:** DONE (delivered as test ZIP v0.4.8; commit only after the user
+confirms the ZIP works).

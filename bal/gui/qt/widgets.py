@@ -388,6 +388,43 @@ class BalTimeEditWidget(QWidget, _LockTimeEditor):
             self.combo.setCurrentIndex(index)
             #self.on_current_index_changed(index, force)
 
+    def apply_user_type_visibility(self):
+        """Re-apply the BASIC/ADVANCED visibility of the Raw/Date selector.
+
+        WHY this is needed (bug reported by the owner, task #04): the Raw/Date
+        combo is hidden in BASIC mode and shown in ADVANCED mode. That visibility
+        used to be decided ONLY in ``__init__`` (see the ``self._basic_mode``
+        block there). The WILL and HEIR tab toolbars are created once and then
+        REUSED for the whole session (they are not rebuilt when the user switches
+        USER TYPE), so after switching from BASIC to ADVANCED the combo stayed
+        hidden there and the user could only use the "Date" editor. The same
+        happened when a RAW value was pushed from the wizard: the raw number
+        showed (the active editor was updated) but the selector box stayed hidden
+        because nothing ever re-showed it. The wizard worked only because it is
+        recreated every time it is opened.
+
+        This method re-reads ``is_basic_mode()`` and shows/hides ONLY the combo.
+        It deliberately does NOT change the current value or the active editor
+        (owner request: keep the current value to avoid confusing the delivery
+        date with the inheritance). It is called from
+        ``WillSettingsWidget.apply_user_type_visibility()`` (triggered by
+        ``BalWindow.update_all()`` on a BASIC<->ADVANCED switch), so toggling the
+        mode takes effect immediately on the already-existing WILL/HEIR toolbars
+        without restarting Electrum.
+
+        It is safe to call repeatedly and on either layout (horizontal toolbar or
+        vertical wizard): it only flips the visibility of the Raw/Date combo.
+        """
+        try:
+            basic = self.bal_window.bal_plugin.is_basic_mode()
+        except Exception:
+            # If the mode cannot be read, show the combo (the safe, most
+            # capable default for an existing widget).
+            basic = False
+        # Hidden in BASIC, visible in ADVANCED. The current value/editor is left
+        # untouched on purpose (see the docstring).
+        self.combo.setVisible(not basic)
+
     def set_value(
         self,
         x: Any,
@@ -917,6 +954,18 @@ class WillSettingsWidget(QWidget):
         if threshold is not None:
             # Hidden in BASIC, visible in ADVANCED.
             threshold.setVisible(not basic)
+
+        # Task #04: also re-apply the Raw/Date selector visibility on BOTH the
+        # delivery-time (locktime) and the check-alive (threshold) boxes. The
+        # combo was hidden once at construction (BASIC) and the reused WILL/HEIR
+        # toolbars never re-showed it after switching to ADVANCED. Each composite
+        # decides its own combo visibility from is_basic_mode() WITHOUT touching
+        # its current value or editor.
+        for field in ("locktime", "threshold"):
+            widget = self.widgets.get(field)
+            apply_combo = getattr(widget, "apply_user_type_visibility", None)
+            if callable(apply_combo):
+                apply_combo()
 
     def open_or_save_calendar(self):
         """Build and save an .ics calendar file with SEPARATE reminder events.

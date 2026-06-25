@@ -555,11 +555,12 @@ class BalBuildWillDialog(BalDialog):
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.message_label)
-        # Open the report area already ~500px tall (owner request, allegato1:
-        # the previous ~140px area was far too short). The dialog may still grow
-        # up to 700px to fit a few more lines; beyond that the vertical
-        # scrollbar takes over and the bottom buttons stay reachable.
-        self.scroll_area.setMinimumHeight(500)
+        # Open the report area ~450px tall (owner request: 500px left too much
+        # empty space below the short report; 450px lines up with the desired
+        # window height). The dialog may still grow up to 700px to fit a few more
+        # lines; beyond that the vertical scrollbar takes over and the bottom
+        # buttons stay reachable.
+        self.scroll_area.setMinimumHeight(450)
         self.scroll_area.setMaximumHeight(700)
         self.vbox.addWidget(self.scroll_area, 1)
 
@@ -701,6 +702,38 @@ class BalBuildWillDialog(BalDialog):
             _logger.debug(f"not complete {e} true")
             message = False
             have_to_build = True
+            # Task #7a: if the will was already executed, the wallet is empty and
+            # this exception is expected. Before showing the alarming "Found
+            # CHANGES ... a NEW WILL must be prepared" message, add a clear,
+            # reassuring note on the "Checking your will" row telling the user
+            # the inheritance is already on its way (mempool) or done (on-chain).
+            # The original message is still shown afterwards (owner request: the
+            # red/"changes" message stays, this is only an extra, more precise
+            # informative line).
+            # NOTE: we add the informative note as its OWN extra row (not via
+            # msg_set_checking, which reuses self.check_row and would be
+            # overwritten by the "Found CHANGES" line set below). Passing row=None
+            # to msg_set_status appends a new line, so the executed/mempool note
+            # and the original message are BOTH visible.
+            executed_status = self._executed_inheritance_status()
+            if executed_status == "CONFIRMED":
+                # Green: the inheritance transaction is confirmed on the
+                # blockchain, so it has been executed correctly.
+                self.msg_set_status(
+                    _("Checking your will"),
+                    None,
+                    _("Inheritance already executed (on blockchain)"),
+                    self.COLOR_OK,
+                )
+            elif executed_status == "MEMPOOL":
+                # Orange (warning colour): the transaction is in the mempool,
+                # waiting to be confirmed. Not an error, just "in progress".
+                self.msg_set_status(
+                    _("Checking your will"),
+                    None,
+                    _("Inheritance in mempool (waiting confirmation)"),
+                    self.COLOR_WARNING,
+                )
             if isinstance(e, HeirChangeException):
                 message = _("Heirs changed:")
             elif isinstance(e, WillExecutorNotPresent):
@@ -741,8 +774,15 @@ class BalBuildWillDialog(BalDialog):
                 txs = self.bal_window.build_will()
                 if not txs:
                     self.msg_set_building(
-                        _("Balance is too low, or CheckAlive is in the past.Skipped"),
-                        color = self.COLOR_ERROR,
+                        _(
+                            "Balance is too low, or CheckAlive is in the "
+                            "past. Skipped"
+                        ),
+                        # Orange (warning) instead of red (error): an empty
+                        # wallet after the inheritance was executed is a NORMAL
+                        # situation, not a failure, so the colour should not
+                        # alarm the user (owner request).
+                        color=self.COLOR_WARNING,
                     )
                     return False, None
 
@@ -1545,6 +1585,42 @@ class BalBuildWillDialog(BalDialog):
         a, b, c = error
         self.msg_edit_row(self.msg_error(f"Error: {b}"))
         _logger.error(f"error phase2: {b}")
+
+    def _executed_inheritance_status(self):
+        """Return the on-chain status of an already-executed inheritance.
+
+        Task #7a (owner request). After an inheritance is executed the wallet is
+        fully emptied (the plugin always empties the wallet). Pressing CHECK on
+        such an empty wallet makes ``check_will`` raise NotCompleteWillException
+        (the heirs no longer match the empty wallet), which previously showed the
+        alarming "Found CHANGES ... a NEW WILL must be prepared" message even
+        though the inheritance was, in fact, correctly executed.
+
+        To reassure the user we look at the will items, whose status is already
+        set to CONFIRMED / MEMPOOL by ``Will.check_will`` (see core/will.py), and
+        return a short code describing the real situation:
+
+        Returns:
+            "CONFIRMED" if at least one will transaction is confirmed on-chain
+                (the inheritance is already executed);
+            "MEMPOOL" if none is confirmed but at least one is in the mempool
+                (waiting for confirmation);
+            None if neither (the change really has to be rebuilt).
+
+        CONFIRMED takes precedence over MEMPOOL, since a confirmed transaction is
+        the strongest evidence that the inheritance has gone through.
+        """
+        has_mempool = False
+        try:
+            for _wid, witem in self.bal_window.willitems.items():
+                if witem.get_status("CONFIRMED"):
+                    return "CONFIRMED"
+                if witem.get_status("MEMPOOL"):
+                    has_mempool = True
+        except Exception as _err:
+            # Never let this purely informational check break the flow.
+            _logger.debug(f"_executed_inheritance_status error: {_err}")
+        return "MEMPOOL" if has_mempool else None
 
     def msg_set_checking(self, status="Waiting", row=None):
         row = self.check_row if row is None else row

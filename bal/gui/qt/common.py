@@ -55,9 +55,9 @@ from PyQt6.QtGui import (QColor, QPainter, QPalette, QStandardItem,
                          QStandardItemModel)
 from PyQt6.QtWidgets import (QAbstractItemView, QAbstractSpinBox, QCheckBox,
                              QComboBox, QDateTimeEdit, QGridLayout, QHBoxLayout,
-                             QLabel, QLineEdit, QTextEdit, QMenu, QMenuBar,
-                             QPushButton, QScrollArea, QSizePolicy, QSpinBox,
-                             QStackedWidget, QStyle, QStyleOptionFrame,
+                             QInputDialog, QLabel, QLineEdit, QTextEdit, QMenu,
+                             QMenuBar, QPushButton, QScrollArea, QSizePolicy,
+                             QSpinBox, QStackedWidget, QStyle, QStyleOptionFrame,
                              QVBoxLayout, QWidget, QDialog)
 
 # --- Core (GUI-free) logic layer ---
