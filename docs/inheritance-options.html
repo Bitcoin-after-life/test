@@ -235,6 +235,30 @@ Electrum <strong>close</strong>, not only on Prepare.</blockquote>
 <p>If heirs, percentages, fees, executors and locktimes all still match the signed transactions,
 <code>is_will_valid</code> returns <code>True</code> and <strong>nothing happens</strong>.</p>
 
+<h3>4.8 An heir's share is below the dust limit (DUST)</h3>
+<p>Bitcoin refuses outputs that are too small to spend — the <strong>dust limit</strong>
+(the wallet's <code>dust_threshold</code>). BAL resolves each heir's final amount when it builds
+the will (<code>Heirs.prepare_lists</code>) and compares every share against that limit.</p>
+<ul>
+<li><strong>Some heirs are dust, others valid → build continues.</strong> Each dust heir is
+<strong>skipped</strong> (its share would be unspendable) and listed in the build report as
+<em>“… is DUST – excluded (amount below dust limit)”</em>. The will is still prepared, signed and
+checked with the payable heirs (unchanged behaviour).</li>
+<li><strong>EVERY heir is dust → build blocked.</strong> If all shares are below the dust limit the
+inheritance would pay nobody. As of <strong>v0.4.7</strong> BAL refuses it
+(<code>HeirAmountIsDustException</code>) and the <strong>Building Will</strong> window stops with a
+clear <span class="pill red">red</span> message: <em>“All heirs' shares are below the dust limit:
+the inheritance cannot be created. Increase the amounts or reduce the number of heirs.”</em>
+Nothing is built, signed, checked or added to the list.</li>
+</ul>
+<blockquote><strong>When?</strong> Typically with a <strong>very small balance</strong> split among
+<strong>percentage</strong> heirs, or when every fixed amount is below the dust limit. Fix: raise the
+per‑heir amounts or use fewer heirs.</blockquote>
+<blockquote><strong>Note (v0.4.7):</strong> the dust check lives in <code>prepare_lists</code>, which sees
+<strong>all</strong> heirs across <strong>all</strong> locktimes — a single transaction only covers the
+earliest locktime, so checking there would wrongly block a will whose later dates still have valid
+heirs. <strong>On‑chain fee:</strong> none (pre‑build safety check).</blockquote>
+
 <h2>5. What happens on the will‑executor servers</h2>
 <table>
 <thead><tr><th>Your action</th><th>Effect on the servers</th></tr></thead>
@@ -267,6 +291,7 @@ executor that <em>should</em> hold your tx did not return it — re‑Broadcast 
 <tr><td>Check‑Alive threshold already passed</td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
 <tr><td>Any change to an <strong>already signed/sent</strong> will <strong>that postpones it or expires it</strong></td><td class="yes">Yes after</td><td class="fee">Yes</td></tr>
 <tr><td>Nothing changed</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><td>Every heir's share below the dust limit (all‑dust) — build <strong>blocked</strong> (§4.8)</td><td class="no">No</td><td class="no">No</td></tr>
 </tbody>
 </table>
 
@@ -280,10 +305,11 @@ executor that <em>should</em> hold your tx did not return it — re‑Broadcast 
     it is just a free <strong>rebuild</strong>.</li>
 <li>Always finish with <strong>Sign → Broadcast → Check</strong> so executors hold the current plan (green).</li>
 <li>The wallet is always <strong>fully emptied</strong> by the inheritance, so heir amounts must add up.</li>
+<li><strong>Mind the dust limit.</strong> A share below Bitcoin's dust limit is skipped; if <strong>every</strong> heir is dust the build is blocked with a clear message (§4.8) — raise the amounts or use fewer heirs.</li>
 </ol>
 
-<footer>This document reflects BAL plugin v0.3.4. Behaviour is derived directly from
-<code>core/will.py</code> and <code>gui/qt/window.py</code>.</footer>
+<footer>This document reflects BAL plugin v0.4.7. Behaviour is derived directly from
+<code>core/will.py</code>, <code>core/heirs.py</code> and <code>gui/qt/window.py</code>.</footer>
 </div>
 
 <script type="module">
