@@ -19,7 +19,7 @@
   services) can be paid a fee to broadcast the inheritance when due. The owner
   periodically proves they are alive ("check-alive"); if the deadline passes,
   the inheritance becomes spendable.
-- **Current version:** see `bal/VERSION` (last shipped: **0.4.7**).
+- **Current version:** see `bal/VERSION` (last shipped: **0.4.8**).
 
 ---
 
@@ -89,14 +89,15 @@ HANDOFF.md                   <- this file.
 
 Run everything from `/home/user/webapp`.
 
-**Full test suite (expected: 258 passed as of v0.4.7):**
+**Full test suite (expected: 266 passed as of v0.4.8):**
 ```bash
 QT_QPA_PLATFORM=offscreen PYTHONPATH=electrum-src python3 -m pytest \
   tests/test_core_*.py tests/test_gui_*.py \
   tests/test_anticipate_past_locktime.py tests/test_anticipate_manual_locktime.py \
   tests/test_group_b_auto_sign.py tests/test_group_c_settings.py \
   tests/test_group_d_alarms.py tests/test_group_e_mock_giovanna7.py \
-  tests/test_group_f_heir_change_rebuild.py tests/test_group_g_basic_calendar.py -q
+  tests/test_group_f_heir_change_rebuild.py tests/test_group_g_basic_calendar.py \
+  tests/test_group_h_v048.py -q
 ```
 
 **Lint (only NEW errors matter; ignore pre-existing noise):**
@@ -182,9 +183,43 @@ must **fully restart Electrum** (not just reload the plugin) — Electrum's
   With `setWordWrap(True)`, an explicit `\n` in the text forces a line break.
 - **`BalBuildWillDialog` report area.** Messages are accumulated as HTML in
   `self.labels` and joined by `msg_update` (`"<br><br>".join(...)`, `\n`→`<br>`).
-  The report is inside a `QScrollArea` (v0.4.7: `setMinimumHeight(500)`,
+  The report is inside a `QScrollArea` (v0.4.8: `setMinimumHeight(450)`,
   `setMaximumHeight(700)`); the Close button sits BELOW the scroll area so it
-  stays reachable.
+  stays reachable. Each report row is set via `msg_set_status(label, row,
+  status, color)`; passing `row=None` APPENDS a new line (used to add an extra
+  note without overwriting an existing row), passing the saved row id OVERWRITES
+  it (used by `msg_set_checking`, which reuses `self.check_row`).
+- **BASIC vs ADVANCED (USER TYPE).** A global setting `USER_TYPE`
+  (`plugin_base.py`, config key `bal_user_type`, default `"basic"`). Read it via
+  `bal_plugin.is_basic_mode()`. ADVANCED reveals the **Raw/Date selector** and
+  the **Check-Alive** field; BASIC hides them and disables the check-alive
+  postpone behaviour. Toggling it calls `BalWindow.update_all()`, which calls
+  `WillSettingsWidget.apply_user_type_visibility()` on each open settings widget.
+- **Raw/Date selector visibility (v0.4.8 / task #04 — important gotcha).** The
+  WILL/HEIR tab toolbars are built ONCE and REUSED for the whole session; they
+  are NOT rebuilt when USER TYPE changes. So any per-widget state decided only in
+  `__init__` (like the Raw/Date combo's visibility) gets "stuck". The fix pattern:
+  give the widget an `apply_user_type_visibility()` method that re-reads
+  `is_basic_mode()` and re-applies visibility WITHOUT changing the value/editor,
+  and call it from `WillSettingsWidget.apply_user_type_visibility()` (already
+  wired for `locktime` and `threshold`). The wizard avoids the bug only because
+  it is recreated on every open. Keep this in mind for any future per-widget
+  ADVANCED-dependent UI.
+- **Will-item status flags (CONFIRMED / MEMPOOL).** `Will.check_will`
+  (`core/will.py`) sets each will item's status to `CONFIRMED` / `MEMPOOL`
+  (read with `witem.get_status("CONFIRMED")` etc.). After an inheritance is
+  executed the wallet is fully EMPTIED, so a later CHECK makes
+  `check_willexecutors_and_heirs` raise `NotCompleteWillException` (heirs no
+  longer match the empty wallet). v0.4.8 adds
+  `dialogs.py::_executed_inheritance_status()` (CONFIRMED wins over MEMPOOL) to
+  show a reassuring note instead of an alarming "the will must be rebuilt" only.
+- **Dates shown in the plugin are LOCAL time, not UTC.** The Date editor
+  (`LockTimeDateEdit`, a `QDateTimeEdit`) uses `datetime.fromtimestamp(ts)` with
+  NO timezone, i.e. the user's local time. So an Italian user sees Italian time;
+  the on-chain `nLockTime` is the same instant expressed in UTC (e.g. ts
+  `1782370800` = 2026-06-25 09:00 Italy = 07:00 UTC). There is a helper
+  `Will._format_locktime` that renders a timestamp in UTC. (A planned "(UTC)"
+  label in the wizard is currently SUSPENDED — see suspended item below.)
 
 ---
 
@@ -198,9 +233,17 @@ must **fully restart Electrum** (not just reload the plugin) — Electrum's
   conflicts preferring remote `main` unless a local change is essential,
   squash local commits into ONE comprehensive commit, push (force if needed),
   then create/update the PR and SHARE the PR URL with the owner.
-- The previous PR for this line of work is **PR #13** on the repo.
-- Deliverable ZIPs are uploaded with the file-wrapper tool and the URL is given
-  to the owner. (Latest: v0.4.7.)
+- **ZIPs are NOT committed** (`.gitignore` excludes `*.zip`). They are
+  distributed via **GitHub Releases** (`gh release create vX.Y.Z file.zip ...`).
+  The newest release is the "Latest" and is the owner's convenient download.
+- Deliverable ZIPs are ALSO uploaded with the file-wrapper tool so the owner can
+  download them directly from chat.
+- **Auth note:** if `git push` / `gh` fails with "Invalid username or token",
+  re-run the GitHub environment setup, then retry.
+- PR history for this line of work: **#13** (v0.4.7), **#14** (docs/DUST section +
+  translation), **#15** (v0.4.8). All merged into `main`.
+- Releases: latest is **v0.4.8** (asset `bal-electrum-plugin-v0.4.8.zip`);
+  v0.4.7 kept in history.
 
 ---
 
@@ -218,6 +261,31 @@ must **fully restart Electrum** (not just reload the plugin) — Electrum's
   (after "(or backup)" and after "miner fees"); **ALL-DUST guard** in
   `prepare_lists` that blocks (clear RED message) only when EVERY heir is dust;
   3 new tests pinning the dust behaviour. 258 tests pass.
+- **v0.4.8** — seven UX fixes: (#04) Raw/Date selector now reappears on the
+  WILL/HEIR tabs when switching to ADVANCED (and on a raw value from the wizard),
+  via a new `BalTimeEditWidget.apply_user_type_visibility()`; (#3) Building Will
+  report min height 500→450; (#5) "User Type" setting moved to the bottom (above
+  "Rebroadcast transactions"); (#6) enabling ADVANCED now requires typing
+  **"at My Risk"** (case-insensitive); (#7a) on CHECK with an emptied wallet, an
+  extra note on "Checking your will": "Inheritance already executed (on
+  blockchain)" GREEN / "Inheritance in mempool (waiting confirmation)" ORANGE;
+  (#7b) "Balance is too low… Skipped" recoloured ORANGE + space fix; Reset button
+  renamed "Reset to Default Setting". 8 new tests (`test_group_h_v048.py`).
+  266 tests pass.
+
+### Open / suspended / backlog items (see `.agent_memory_tasks.md` for detail)
+- **SUSPENDED — "(UTC)" label in the wizard.** The owner asked to show an
+  "(UTC - Greenwich Time)" hint next to the date with a tooltip. We discovered
+  the date field shows LOCAL time, not UTC, so the label would be misleading.
+  Options proposed (A: label it "Local time"; B: also show the UTC equivalent;
+  C: convert the field to UTC). The owner suspended it ("salta le modifiche UTC
+  per ora"). Decide the approach with the owner before implementing.
+- **Backlog (NOT started, analysis saved):** #01 misleading "heir not found"
+  message when the date was only anticipated; #02 will-executor list should
+  green-check only servers that responded + green ping, re-evaluated each
+  download; #03 missing "BAL Invalidate transaction" history label when
+  invalidating from the AUTO-opened window (linked to a "unify invalidate
+  procedure" task). Task #04 is DONE (v0.4.8).
 
 ---
 
@@ -225,8 +293,12 @@ must **fully restart Electrum** (not just reload the plugin) — Electrum's
 
 1. Read this file, then `CHANGELOG.md` (last entries) and `.agent_memory_tasks.md`.
 2. Confirm the environment: `git status`, current branch, `bal/VERSION`.
-3. Run the full test suite (Section 3) — expect all green (258 as of v0.4.7).
+3. Run the full test suite (Section 3) — expect all green (266 as of v0.4.8).
 4. Talk to the owner in **Italian**, write everything else in **English**.
 5. For any change: present a PLAN, wait for "OK" (R4), then implement, test,
    build a ZIP, let the owner test, and only commit after explicit confirmation.
 6. Keep credit usage low: summarize, don't paste big code blocks; batch work.
+7. When the owner confirms a ZIP works: commit (ZIP-first), sync with `main`,
+   squash to one commit, push, open a PR, merge it, then create/refresh a GitHub
+   **Release** with the ZIP attached (it becomes the owner's "Latest" download).
+   Always give the owner the PR URL and the Release URL.
