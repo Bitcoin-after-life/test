@@ -227,6 +227,10 @@ the will is no longer coherent → it is treated like an heir change
 > whole spendable balance is distributed; otherwise an `AmountException` warns you
 > to adjust.
 
+> **Watch the dust limit.** If a share is so small that it falls below Bitcoin's
+> *dust limit*, that heir is skipped (see §4.8). Splitting a tiny balance among
+> many heirs, or giving an heir a very small percentage, can produce dust shares.
+
 ### 4.5 Changing the transaction fee (sat/byte)
 
 Each will item stores the fee rate it was built with. A different rate raises
@@ -254,6 +258,43 @@ Each will item stores the fee rate it was built with. A different rate raises
 If heirs, percentages, fees, executors and locktimes all still match the signed
 transactions, `is_will_valid` returns `True` and **nothing happens** — your will
 stays exactly as broadcast to the executors.
+
+### 4.8 An heir's share is below the dust limit (DUST)
+
+Bitcoin refuses to create outputs that are too small to be worth spending — the
+so‑called **dust limit** (the wallet's `dust_threshold`). BAL resolves every
+heir's final amount when it builds the will (`Heirs.prepare_lists` →
+`fixed_percent_lists_amount` / `normalize_perc`) and compares each share against
+that limit.
+
+- **Some heirs are dust, others are valid → build continues.** Each dust heir is
+  **skipped** (its share would be unspendable). The build proceeds with the
+  remaining valid heirs, and the build report lists every excluded heir as
+  *“… is DUST – excluded (amount below dust limit)”* so you can see who was left
+  out. Behaviour is unchanged: the will is still prepared, signed and checked
+  with the payable heirs.
+
+- **EVERY heir is dust → the build is blocked.** If *all* heirs' shares are below
+  the dust limit, the inheritance would pay nobody (only the change and the
+  will‑executor fee). Previously such an *empty* will was still built, signed,
+  checked and shown in the list. As of **v0.4.7** BAL refuses it:
+  `Heirs.prepare_lists` raises `HeirAmountIsDustException`, and the **Building
+  Will** window stops with a clear **red** message:
+  *“All heirs' shares are below the dust limit: the inheritance cannot be
+  created. Increase the amounts or reduce the number of heirs.”*
+  Nothing is built, signed, checked or added to the list.
+
+> **When does this happen?** Typically with a **very small wallet balance** split
+> among **percentage** heirs (e.g. each heir ends up with a few hundred sats), or
+> when every fixed amount is set below the dust limit. The fix is exactly what
+> the message says: raise the per‑heir amounts, or reduce the number of heirs.
+
+> **Note (v0.4.7):** the dust check lives in `prepare_lists`, which sees **all**
+> heirs across **all** locktimes with their final amounts. This is deliberate: a
+> single transaction only ever covers the earliest locktime, so checking there
+> would wrongly block a will whose *later* dates still have valid heirs.
+
+- **On‑chain fee:** none — this is a pre‑build safety check; nothing is broadcast.
 
 ---
 
@@ -291,6 +332,7 @@ stays exactly as broadcast to the executors.
 | Check‑Alive threshold already in the past | ✅ after | ✅ **yes** |
 | Any change to an **already signed/sent** will **that postpones it or expires it** | ✅ after | ✅ **yes** (invalidate first) |
 | Nothing changed | ❌ | ❌ |
+| Every heir's share below the dust limit (all‑dust) — build **blocked** (§4.8) | ❌ | ❌ |
 
 ---
 
@@ -306,8 +348,11 @@ stays exactly as broadcast to the executors.
    *current* plan (green), not an obsolete one.
 4. The wallet is always **fully emptied** by the inheritance, so heir amounts must
    add up.
+5. **Mind the dust limit.** A share below Bitcoin's dust limit is skipped; if
+   **every** heir is dust the build is blocked with a clear message (§4.8) —
+   raise the amounts or use fewer heirs.
 
 ---
 
-*This document reflects BAL plugin v0.3.4. Behaviour is derived directly from
-`core/will.py` and `gui/qt/window.py`.*
+*This document reflects BAL plugin v0.4.7. Behaviour is derived directly from
+`core/will.py`, `core/heirs.py` and `gui/qt/window.py`.*
