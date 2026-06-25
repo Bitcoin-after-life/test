@@ -438,6 +438,29 @@ class Plugin(BalPlugin):
         def on_user_type_change(idx):
             # Persist "basic"/"advanced" and refresh the open windows so the
             # advanced controls appear/disappear right away.
+            #
+            # SAFETY GATE (owner request): enabling ADVANCED exposes powerful,
+            # easy-to-misuse controls. Before switching to ADVANCED the user must
+            # type a confirmation phrase ("at My Risk", case-insensitive). If the
+            # phrase is wrong or the dialog is cancelled, we revert the combo to
+            # BASIC and do NOT enable ADVANCED. Switching back to BASIC needs no
+            # confirmation.
+            if idx == 1:
+                text, ok = QInputDialog.getText(
+                    d,
+                    _("Enable ADVANCED mode"),
+                    _("Type 'at My Risk' to enable ADVANCED mode"),
+                )
+                # Accept any capitalisation (e.g. "at my risk", "AT MY RISK").
+                if not ok or text.strip().lower() != "at my risk":
+                    # Revert to BASIC. Block the signal while we reset the combo
+                    # index so this handler is not called again recursively.
+                    user_type_combo.blockSignals(True)
+                    user_type_combo.setCurrentIndex(0)
+                    user_type_combo.blockSignals(False)
+                    self.USER_TYPE.set("basic")
+                    self.update_all()
+                    return
             self.USER_TYPE.set("advanced" if idx == 1 else "basic")
             self.update_all()
 
@@ -473,40 +496,29 @@ class Plugin(BalPlugin):
         # Reset/support button row (bottom). Assigning ``QGridLayout(d)`` would
         # have made the grid the dialog's only layout, leaving no room for them.
         grid = QGridLayout()
-        add_widget(
-            grid,
-            "User Type",
-            user_type_combo,
-            0,
-            (
-                "Choose how much detail the plugin shows.\n\n"
-                "BASIC (default): a simpler interface. It hides the advanced "
-                "controls (the Raw/Date selector and the 'Check Alive' field) "
-                "and turns off the 'check alive' postpone behaviour, so you "
-                "only set the delivery date.\n\n"
-                "ADVANCED: shows every control, including the 'Check Alive' "
-                "field and the Raw/Date selector."
-            ),
-        )
+        # NOTE: the "User Type" row used to be the first row (row 0). It was moved
+        # to the BOTTOM of the grid (just above "Rebroadcast transactions") at the
+        # owner's request; see the add_widget call further below. The remaining
+        # rows were renumbered up by one accordingly.
         add_widget(
             grid,
             "Hide Replaced",
             heir_hide_replaced,
-            1,  
+            0,
             "Hide replaced transactions from will detail and list",
         )
         add_widget(
             grid,
             "Hide Invalidated",
             heir_hide_invalidated,
-            2,
+            1,
             "Hide invalidated transactions from will detail and list",
         )
         add_widget(
             grid,
             "Auto-sign on Check",
             heir_auto_sign,
-            3,
+            2,
             (
                 "When checking, automatically sign and broadcast the will "
                 "transactions to their will-executors.\n"
@@ -518,7 +530,7 @@ class Plugin(BalPlugin):
             grid,
             "Panel editable Date and Fee",
             heir_editable_dates,
-            4,
+            3,
             (
                 "When enabled, the delivery-time and check-alive date fields "
                 "can be edited everywhere (toolbar / Heirs tab), not only in "
@@ -540,7 +552,7 @@ class Plugin(BalPlugin):
             grid,
             "Add transaction without willexecutor",
             heir_no_willexecutor,
-            5,
+            4,
             (
                 "Create a will that does not require a Will-executor; it can be "
                 "saved, for example, on a USB stick, and a copy can be given to "
@@ -551,7 +563,7 @@ class Plugin(BalPlugin):
             grid,
             "Number of reminders",
             heir_num_reminders,
-            6,
+            5,
             (
                 "How many reminder alarms the exported calendar (.ics) event "
                 "contains.\n\n"
@@ -568,7 +580,7 @@ class Plugin(BalPlugin):
             grid,
             "Event summary",
             edit_event_summary,
-            7,
+            6,
             (
                 "Default message to be used in event summary\n"
                  "Variables:\n"
@@ -581,7 +593,7 @@ class Plugin(BalPlugin):
             grid,
             "Event description",
             edit_event_description,
-            8,
+            7,
             (
                 "Default message to be used in event description\n"
                  "Variables:\n"
@@ -607,6 +619,24 @@ class Plugin(BalPlugin):
         #    "Ask before to ping willexecutor",
         # )
         # add_widget(grid,"Enable Multiverse(EXPERIMENTAL/BROKEN)",heir_enable_multiverse,6,"enable multiple locktimes, will import.... ")
+        # "User Type" placed here (row 8), at the BOTTOM of the settings just
+        # above "Rebroadcast transactions" (owner request). It used to be the very
+        # first row; the other rows were renumbered up by one when it was moved.
+        add_widget(
+            grid,
+            "User Type",
+            user_type_combo,
+            8,
+            (
+                "Choose how much detail the plugin shows.\n\n"
+                "BASIC (default): a simpler interface. It hides the advanced "
+                "controls (the Raw/Date selector and the 'Check Alive' field) "
+                "and turns off the 'check alive' postpone behaviour, so you "
+                "only set the delivery date.\n\n"
+                "ADVANCED: shows every control, including the 'Check Alive' "
+                "field and the Raw/Date selector."
+            ),
+        )
         grid.addWidget(heir_repush, 9, 0)
         grid.addWidget(
             HelpButton(
@@ -668,7 +698,7 @@ class Plugin(BalPlugin):
             # reflects the reset values.
             self.update_all()
 
-        btn_reset = QPushButton(_("Reset setting"))
+        btn_reset = QPushButton(_("Reset to Default Setting"))
         btn_reset.setToolTip(_("Reset these settings to their default values"))
         btn_reset.clicked.connect(on_reset_defaults)
 
